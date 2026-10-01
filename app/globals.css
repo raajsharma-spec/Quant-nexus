@@ -1,0 +1,217 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Quantum Nexus design tokens
+   void / deck / raised  : background layers, darkest to lightest
+   ket   (cyan)          : what actually happened — results, wires, "run"
+   phase (violet)        : what you predicted — predictions, focus
+   signal (blue)         : primary actions and progress
+--------------------------------------------------------------------------- */
+@theme {
+  --color-void: #050814;
+  --color-deck: #0b1124;
+  --color-raised: #131b38;
+  --color-line: rgb(150 170 255 / 0.14);
+  --color-ink: #e9edfb;
+  --color-mute: #9ca8c6;
+  --color-dim: #7480a0;
+  --color-ket: #5ad7f0;
+  --color-phase: #a892ff;
+  --color-signal: #6394ff;
+  --color-ok: #5fe0a8;
+  --color-warn: #f5c16c;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --animate-collapse: collapse 1.3s cubic-bezier(0.2, 0.7, 0.2, 1) 0.15s both;
+  --animate-ghost-a: ghost-a 1.3s cubic-bezier(0.2, 0.7, 0.2, 1) 0.15s both;
+  --animate-ghost-b: ghost-b 1.3s cubic-bezier(0.2, 0.7, 0.2, 1) 0.15s both;
+  --animate-rise: rise 0.35s ease-out both;
+  --animate-pulse-wire: pulse-wire 1.1s ease-in-out infinite;
+  --animate-grow: grow 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+
+  @keyframes collapse {
+    from { filter: blur(7px); opacity: 0.35; letter-spacing: 0.02em; }
+    to { filter: blur(0); opacity: 1; letter-spacing: -0.035em; }
+  }
+  @keyframes ghost-a {
+    from { transform: translate(-14px, 5px); opacity: 0.75; filter: blur(3px); }
+    to { transform: translate(0, 0); opacity: 0; filter: blur(0); }
+  }
+  @keyframes ghost-b {
+    from { transform: translate(14px, -5px); opacity: 0.75; filter: blur(3px); }
+    to { transform: translate(0, 0); opacity: 0; filter: blur(0); }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse-wire {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 1; }
+  }
+  @keyframes grow {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+}
+
+html {
+  color-scheme: dark;
+  background: var(--color-void);
+}
+
+body {
+  background-color: var(--color-void);
+  /* Two soft glows and a faint measurement grid. */
+  background-image:
+    radial-gradient(60rem 36rem at 12% -10%, rgb(90 215 240 / 0.1), transparent 60%),
+    radial-gradient(52rem 34rem at 96% 0%, rgb(168 146 255 / 0.12), transparent 62%),
+    linear-gradient(rgb(150 170 255 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(150 170 255 / 0.035) 1px, transparent 1px);
+  background-size: auto, auto, 44px 44px, 44px 44px;
+  background-attachment: fixed;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+}
+
+::selection {
+  background: rgb(168 146 255 / 0.4);
+}
+
+/* Visible keyboard focus everywhere. */
+:focus-visible {
+  outline: 2px solid var(--color-ket);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@layer components {
+  /* Glass panel: used for cards. */
+  .panel {
+    border: 1px solid var(--color-line);
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgb(19 27 56 / 0.72), rgb(11 17 36 / 0.72));
+    backdrop-filter: blur(10px);
+  }
+  /* Quieter inset surface inside a panel. */
+  .well {
+    border: 1px solid var(--color-line);
+    border-radius: 12px;
+    background: rgb(5 8 20 / 0.55);
+  }
+  /* The one loud panel per screen. */
+  .panel-lead {
+    border: 1px solid rgb(99 148 255 / 0.35);
+    border-radius: 22px;
+    background:
+      radial-gradient(40rem 18rem at 0% 0%, rgb(90 215 240 / 0.13), transparent 60%),
+      radial-gradient(34rem 18rem at 100% 100%, rgb(168 146 255 / 0.16), transparent 60%),
+      linear-gradient(180deg, rgb(19 27 56 / 0.9), rgb(11 17 36 / 0.9));
+    box-shadow: 0 30px 80px -40px rgb(99 148 255 / 0.55);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 12px;
+    padding: 0.625rem 1rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.25rem;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+    cursor: pointer;
+  }
+  .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, #6fd9f2, #6394ff 55%, #a892ff);
+    color: #050814;
+  }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+  .btn-secondary {
+    border: 1px solid rgb(150 170 255 / 0.28);
+    background: rgb(150 170 255 / 0.07);
+    color: var(--color-ink);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    border-color: rgb(150 170 255 / 0.5);
+    background: rgb(150 170 255 / 0.13);
+  }
+  .btn-ghost {
+    color: var(--color-mute);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    color: var(--color-ink);
+    background: rgb(150 170 255 / 0.08);
+  }
+
+  /* Small status tag. */
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-line);
+    padding: 0.15rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.1rem;
+    white-space: nowrap;
+  }
+
+  /* Quantum notation is always set in mono. */
+  .ket {
+    font-family: var(--font-mono);
+    font-feature-settings: normal;
+  }
+
+  /* The hero headline starts "superposed" and collapses into focus once. */
+  .collapse-title {
+    position: relative;
+    display: inline-block;
+    animation: var(--animate-collapse);
+  }
+  .collapse-title::before,
+  .collapse-title::after {
+    content: attr(data-text);
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    mix-blend-mode: screen;
+  }
+  .collapse-title::before {
+    color: var(--color-ket);
+    animation: var(--animate-ghost-a);
+  }
+  .collapse-title::after {
+    color: var(--color-phase);
+    animation: var(--animate-ghost-b);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Thin scrollbars that match the dark theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(150 170 255 / 0.25) transparent;
+}
