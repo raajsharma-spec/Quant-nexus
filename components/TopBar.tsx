@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Flame, LogOut, Menu, RotateCcw, Sparkles, UserRound } from "lucide-react";
+import { Flame, LogOut, Menu, RotateCcw, Settings, Sparkles, UserRound } from "lucide-react";
 import { XP_PER_LEVEL } from "@/lib/analytics";
+import { LEVEL_LABEL } from "@/lib/learnerLevel";
 import { useApp } from "./AppProvider";
 import { LanguageToggle } from "./LanguageToggle";
 import { DemoBadge } from "./ui";
@@ -74,7 +75,7 @@ export function TopBar({ onMenu, onReset }: { onMenu: () => void; onReset: () =>
             <div className="panel absolute right-0 top-11 z-40 w-64 bg-deck p-3 shadow-2xl">
               <p className="px-2 font-semibold">{profile?.name}</p>
               <p className="px-2 text-sm text-mute">
-                {isEducator ? "Educator" : `Level ${insights.level} · ${insights.xp} XP`}
+                {isEducator ? "Educator" : `${LEVEL_LABEL[insights.learner.level]} · XP level ${insights.level} · ${insights.xp} XP`}
               </p>
               <p className="mt-1 px-2 text-xs text-dim">
                 {demo
@@ -82,6 +83,13 @@ export function TopBar({ onMenu, onReset }: { onMenu: () => void; onReset: () =>
                   : "Live interaction. Saved only on this device."}
               </p>
               <div className="mt-3 flex flex-col gap-1 border-t border-line pt-3">
+                <Link
+                  href="/settings"
+                  className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-sm text-mute hover:bg-white/[0.06] hover:text-ink"
+                >
+                  <Settings size={16} aria-hidden />
+                  Settings
+                </Link>
                 <Link
                   href="/login"
                   className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-sm text-mute hover:bg-white/[0.06] hover:text-ink"

@@ -597,3 +597,26 @@ export const LESSONS: Partial<Record<TopicId, Lesson>> = {
 export function lessonFor(topic: TopicId): Lesson | undefined {
   return LESSONS[topic];
 }
+
+/**
+ * The concept's core experiment: the circuit the learner predicts, runs,
+ * observes and explains in stages 06–09 of the journey.
+ */
+export function coreExperiment(topic: TopicId): { circuit: CircuitSpec; question: L | null; intro: L[] } | null {
+  const section = LESSONS[topic]?.sections.find((s) => s.kind === "predict");
+  if (!section?.circuit) return null;
+  return { circuit: section.circuit, question: section.question ?? null, intro: section.body };
+}
+
+/** Sections of a lesson by kind — the journey shows each kind in its own stage. */
+export function sectionsOf(topic: TopicId, kinds: SectionKind[]): LessonSection[] {
+  return (LESSONS[topic]?.sections ?? []).filter((s) => kinds.includes(s.kind));
+}
+
+/** Id of the closing "key ideas" block that ends every Learn stage. */
+export const TAKEAWAYS_BLOCK = "takeaways";
+
+/** The blocks of a concept's Learn stage, in order: its theory sections, then the key ideas. */
+export function learnBlockIds(topic: TopicId): string[] {
+  return [...sectionsOf(topic, ["concept", "visual"]).map((section) => section.id), TAKEAWAYS_BLOCK];
+}

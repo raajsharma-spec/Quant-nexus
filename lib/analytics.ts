@@ -8,46 +8,28 @@
 
 import { CHALLENGES } from "@/data/challenges";
 import { INTERACTIVE_TOPICS, topicTitle } from "@/data/topics";
-import { overallMastery, topicMastery, topicStatus } from "./mastery";
-import {
-  dayKey,
-  newId,
-  type AppState,
-  type EventType,
-  type TelemetryEvent,
-} from "./storage";
-import type { Lang, TopicId } from "./types";
+import { assessmentSlots, DEMONSTRATED, slotLabel } from "./adaptiveAssessment";
+import { appendEvent, createEvent } from "./events";
+import { inferLevel, type LevelEstimate } from "./learnerLevel";
+import { overallMastery, overallProgress, topicMastery, topicStatus } from "./mastery";
+import { activeMisconceptions } from "./misconceptions";
+import { completedStageCount, conceptTime, progressOf } from "./stages";
+import { dayKey, type AppState, type EventType } from "./storage";
+import { STAGE_IDS, type Lang, type TopicId } from "./types";
 
-/** Keep the log bounded so localStorage never fills up. */
-const MAX_EVENTS = 600;
-
-export function createEvent(
-  type: EventType,
-  data: Partial<Pick<TelemetryEvent, "topic" | "detail" | "meta" | "seeded" | "at">> = {}
-): TelemetryEvent {
-  return { id: newId("ev"), type, at: data.at ?? Date.now(), ...data };
-}
-
-/** Add an event to the log and mark today as an active day. */
-export function appendEvent(state: AppState, event: TelemetryEvent): AppState {
-  const events = [...state.events, event].slice(-MAX_EVENTS);
-  const today = dayKey(event.at);
-  const activeDays = state.activeDays.includes(today)
-    ? state.activeDays
-    : [...state.activeDays, today].slice(-60);
-  return { ...state, events, activeDays };
-}
+export { appendEvent, createEvent };
 
 // ---------------------------------------------------------------------------
 // XP, level, streak — all derived from real records, never stored separately
 // ---------------------------------------------------------------------------
 
 export const XP_RULES = {
-  lessonCompleted: 20,
+  stageCompleted: 5,
+  lessonCompleted: 20, // Python Foundations
   prediction: 2,
   correctPrediction: 8,
   challengeSolved: 10,
-  masteryCheck: 25, // scaled by best score
+  masteryCheck: 25, // scaled by score
   topicMastered: 50,
   achievement: 10,
 } as const;
@@ -55,7 +37,12 @@ export const XP_RULES = {
 export const XP_PER_LEVEL = 250;
 
 export function computeXp(state: AppState): number {
-  const lessons = Object.values(state.lessons).filter((l) => l?.completed).length;
+  const lessons = state.lessons.python?.completed ? 1 : 0;
+  const threshold = state.settings.masteryThreshold;
+  const stages = INTERACTIVE_TOPICS.reduce(
+    (sum, topic) => sum + completedStageCount(progressOf(state, topic), threshold),
+    0
+  );
   const predictions = state.predictions.length;
   const correct = state.predictions.filter((p) => p.correct).length;
   const solved = Object.values(state.practice).filter((p) => p.solved).length;
@@ -68,7 +55,8 @@ export function computeXp(state: AppState): number {
     if (topic !== "python" && topicStatus(state, topic) === "MASTERED") mastered += 1;
   }
   return Math.round(
-    lessons * XP_RULES.lessonCompleted +
+    stages * XP_RULES.stageCompleted +
+      lessons * XP_RULES.lessonCompleted +
       predictions * XP_RULES.prediction +
       correct * XP_RULES.correctPrediction +
       solved * XP_RULES.challengeSolved +
@@ -117,6 +105,15 @@ export interface WeakConcept {
   total: number;
 }
 
+/** Results in the mastery check of one concept, item by item. */
+export interface AssessmentSummary {
+  /** Items demonstrated right now. */
+  demonstrated: number;
+  /** Items right on the very first attempt. */
+  firstTry: number;
+  total: number;
+}
+
 export interface LearnerInsights {
   conceptMastery: number;
   prediction: Accuracy;
@@ -136,6 +133,24 @@ export interface LearnerInsights {
   xp: number;
   level: number;
   streak: number;
+  /** Share of all stages, across every concept, that are complete. */
+  overallProgress: number;
+  stagesCompleted: number;
+  stagesTotal: number;
+  conceptsMastered: number;
+  /** Average score of the learner's explanations, or null when there are none. */
+  explanationMastery: number | null;
+  explanations: number;
+  /** Share of mastery-check items answered right on the first attempt. */
+  assessmentFirstTry: number | null;
+  assessmentAttempts: number;
+  misconceptionsOpen: number;
+  misconceptionsResolved: number;
+  tutorQuestions: number;
+  /** Time spent inside concept stages, in minutes (measured while a stage is open). */
+  minutesSpent: number;
+  /** The learner's level, inferred from behaviour — never asked. */
+  learner: LevelEstimate;
 }
 
 const toAccuracy = (correct: number, total: number): Accuracy => ({
@@ -165,24 +180,36 @@ export function computeInsights(state: AppState): LearnerInsights {
   const attempts = records.reduce((sum, r) => sum + r.attempts, 0);
   const correctAttempts = records.reduce((sum, r) => sum + r.correctAttempts, 0);
 
-  // Weak concepts from the latest mastery check of each topic.
+  // Weak concepts: mastery-check items that are not demonstrated yet.
   const weakConcepts: WeakConcept[] = [];
-  const latestByTopic = new Map<TopicId, (typeof state.assessments)[number]>();
-  state.assessments.forEach((a) => latestByTopic.set(a.topic, a));
-  latestByTopic.forEach((attempt, topic) => {
-    const byConcept = new Map<string, { correct: number; total: number }>();
-    attempt.answers.forEach((answer) => {
-      const entry = byConcept.get(answer.concept) ?? { correct: 0, total: 0 };
-      entry.total += 1;
-      if (answer.correct) entry.correct += 1;
-      byConcept.set(answer.concept, entry);
-    });
-    byConcept.forEach((entry, concept) => {
-      if (entry.correct / entry.total < 0.7) {
-        weakConcepts.push({ concept, topic, reason: "mastery-check", ...entry });
+  let slotsFirstTry = 0;
+  let slotsSeen = 0;
+  for (const topic of INTERACTIVE_TOPICS) {
+    const progress = state.concepts[topic];
+    if (!progress) continue;
+    for (const slot of assessmentSlots(topic)) {
+      const record = progress.assess[slot];
+      if (!record) continue;
+      slotsSeen += 1;
+      if (record.firstCredit >= DEMONSTRATED) slotsFirstTry += 1;
+      if (record.credit < DEMONSTRATED) {
+        weakConcepts.push({
+          concept: slotLabel(topic, slot),
+          topic,
+          reason: "mastery-check",
+          correct: Math.round(record.credit * 100) / 100,
+          total: 1,
+        });
       }
-    });
-  });
+    }
+  }
+  // Python Foundations keeps its simple check: weak = missed in the latest attempt.
+  const python = state.assessments.filter((a) => a.topic === "python").slice(-1)[0];
+  python?.answers
+    .filter((answer) => !answer.correct)
+    .forEach((answer) =>
+      weakConcepts.push({ concept: answer.concept, topic: "python", reason: "mastery-check", correct: 0, total: 1 })
+    );
   // …and from prediction accuracy below 60% (needs at least 3 predictions).
   (Object.entries(predictionByTopic) as Array<[TopicId, Accuracy]>).forEach(([topic, acc]) => {
     if (acc.total >= 3 && acc.accuracy !== null && acc.accuracy < 60) {
@@ -202,6 +229,15 @@ export function computeInsights(state: AppState): LearnerInsights {
   const recentErrors = runs.slice(-5).filter((e) => e.type === "executionError").length;
 
   const xp = computeXp(state);
+  const threshold = state.settings.masteryThreshold;
+  const stagesCompleted = INTERACTIVE_TOPICS.reduce(
+    (sum, topic) => sum + completedStageCount(progressOf(state, topic), threshold),
+    0
+  );
+  const milliseconds = INTERACTIVE_TOPICS.reduce((sum, topic) => sum + conceptTime(progressOf(state, topic)), 0);
+  const explanationScores = state.explanations.map((e) => e.score);
+  const open = activeMisconceptions(state);
+  const everDetected = new Set(state.misconceptions.map((m) => m.misconception));
 
   return {
     conceptMastery: overallMastery(state),
@@ -213,7 +249,7 @@ export function computeInsights(state: AppState): LearnerInsights {
     attempts,
     hintsRequested: count(state, "hintRequested"),
     topicsRevisited: count(state, "topicRevisited"),
-    lessonsCompleted: Object.values(state.lessons).filter((l) => l?.completed).length,
+    lessonsCompleted: INTERACTIVE_TOPICS.filter((t) => topicMastery(state, t).lessonCompleted).length,
     circuitsRun: count(state, "circuitExecuted"),
     executionErrors: count(state, "executionError"),
     recentErrors,
@@ -221,6 +257,22 @@ export function computeInsights(state: AppState): LearnerInsights {
     xp,
     level: levelFromXp(xp),
     streak: computeStreak(state),
+    overallProgress: overallProgress(state),
+    stagesCompleted,
+    stagesTotal: INTERACTIVE_TOPICS.length * STAGE_IDS.length,
+    conceptsMastered: INTERACTIVE_TOPICS.filter((t) => topicStatus(state, t) === "MASTERED").length,
+    explanationMastery:
+      explanationScores.length === 0
+        ? null
+        : Math.round(explanationScores.reduce((sum, v) => sum + v, 0) / explanationScores.length),
+    explanations: explanationScores.length,
+    assessmentFirstTry: slotsSeen === 0 ? null : Math.round((slotsFirstTry / slotsSeen) * 100),
+    assessmentAttempts: state.assessments.length,
+    misconceptionsOpen: open.length,
+    misconceptionsResolved: everDetected.size - open.length,
+    tutorQuestions: state.tutorLog.length,
+    minutesSpent: Math.round(milliseconds / 60000),
+    learner: inferLevel(state),
   };
 }
 
@@ -246,7 +298,18 @@ export function recentActivity(state: AppState, lang: Lang, limit = 6): Activity
     let positive = true;
     switch (e.type) {
       case "lessonCompleted":
-        text = lang === "hi" ? `${title} lesson complete kiya` : `Completed ${title}`;
+        // For quantum concepts the "stage completed" line already covers this.
+        if (e.topic !== "python") break;
+        text = lang === "hi" ? `${title} lesson complete kiya` : `Completed the ${title} lesson`;
+        break;
+      case "stageCompleted":
+        text =
+          lang === "hi"
+            ? `${title}: ${e.detail} stage complete (${e.meta?.score ?? 100}%)`
+            : `${title}: completed the ${e.detail} stage (${e.meta?.score ?? 100}%)`;
+        break;
+      case "conceptMastered":
+        text = lang === "hi" ? `${title} master kiya` : `Mastered ${title}`;
         break;
       case "predictionCorrect":
         text =
@@ -261,14 +324,37 @@ export function recentActivity(state: AppState, lang: Lang, limit = 6): Activity
             : `Missed a prediction on ${e.detail} — and saw why`;
         positive = false;
         break;
-      case "circuitExecuted":
-        text = lang === "hi" ? `Circuit run kiya: ${e.detail}` : `Ran a circuit: ${e.detail}`;
+      case "explanationSubmitted":
+        text =
+          lang === "hi"
+            ? `${title}: apne words mein explain kiya (${e.detail})`
+            : `${title}: explained it in your own words (${e.detail})`;
         break;
       case "quizCompleted":
         text =
           lang === "hi"
             ? `${title} mastery check mein ${e.detail} score kiya`
             : `Scored ${e.detail} in the ${title} mastery check`;
+        break;
+      case "misconceptionDetected":
+        text =
+          lang === "hi"
+            ? `Possible misconception dikhi: ${e.detail}`
+            : `Possible misconception spotted: ${e.detail}`;
+        positive = false;
+        break;
+      case "misconceptionResolved":
+        text = lang === "hi" ? `Misconception clear hui: ${e.detail}` : `Cleared a misconception: ${e.detail}`;
+        break;
+      case "challengeCompleted":
+        text = lang === "hi" ? `Challenge solve kiya: ${e.detail}` : `Solved the challenge “${e.detail}”`;
+        break;
+      case "quickReview":
+        text =
+          lang === "hi"
+            ? `${title} ka quick review ${e.meta?.correct ? "sahi" : "miss"} hua`
+            : `Quick review of ${title}: ${e.meta?.correct ? "correct" : "missed"}`;
+        positive = !!e.meta?.correct;
         break;
       case "topicUnlocked":
         text = lang === "hi" ? `${e.detail} unlock kiya` : `Unlocked ${e.detail}`;

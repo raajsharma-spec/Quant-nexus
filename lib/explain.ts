@@ -6,7 +6,7 @@
  * This is rule-based and runs locally. No AI model is involved.
  */
 
-import type { BlochVector, SimulationSuccess, TraceStep } from "./quantumSimulator";
+import { angleLabel, type BlochVector, type SimulationSuccess, type TraceStep } from "./quantumSimulator";
 import { ket } from "./prediction";
 import type { L } from "./types";
 
@@ -104,6 +104,85 @@ function explainStep(step: TraceStep): L {
       };
     }
 
+    case "S":
+    case "T": {
+      const turn = gate.type === "S" ? "a quarter-turn" : "an eighth-turn";
+      const turnHi = gate.type === "S" ? "quarter-turn" : "eighth-turn";
+      if (isBasis(was)) {
+        return {
+          en: `${gate.type} on ${q} changes only the phase (${turn}). ${q} stays ${basisKet(was)}, so the measurement odds are untouched.`,
+          hi: `${q} par ${gate.type} gate sirf phase change karta hai (${turnHi}). ${q} ${basisKet(was)} hi rehta hai, isliye measurement ki probability same rehti hai.`,
+        };
+      }
+      return {
+        en: `${gate.type} on ${q} turns the phase of the |1⟩ part by ${turn}. The arrow moves around the equator, but the odds of 0 and 1 stay the same.`,
+        hi: `${q} par ${gate.type} gate |1⟩ part ka phase ${turnHi} se ghumata hai. Arrow equator par ghoomta hai, lekin 0 aur 1 ki probability same rehti hai.`,
+      };
+    }
+
+    case "RX":
+    case "RY":
+    case "RZ": {
+      const axis = gate.type[1];
+      const angle = angleLabel(gate.theta ?? Math.PI / 2);
+      if (gate.type === "RZ") {
+        return {
+          en: `RZ(${angle}) on ${q} turns the state around the Z axis. That changes only the phase, so the odds of 0 and 1 stay the same.`,
+          hi: `${q} par RZ(${angle}) state ko Z axis ke around ghumata hai. Isse sirf phase change hota hai, isliye 0 aur 1 ki probability same rehti hai.`,
+        };
+      }
+      const p1 = Math.round(((1 - after[gate.qubit].z) / 2) * 100);
+      return {
+        en: `R${axis}(${angle}) on ${q} turns the state by ${angle} around the ${axis} axis. The chance of measuring 1 on ${q} is now about ${p1}%.`,
+        hi: `${q} par R${axis}(${angle}) state ko ${axis} axis ke around ${angle} se ghumata hai. Ab ${q} par 1 measure hone ka chance lagbhag ${p1}% hai.`,
+      };
+    }
+
+    case "CZ": {
+      const t = `q${gate.target}`;
+      const other = kindOf(before[gate.target as number]);
+      if (isBasis(was) && isBasis(other)) {
+        return {
+          en: `CZ on ${q} and ${t}: it only adds a minus sign when both qubits are |1⟩. That is a phase change, so the measured results stay the same.`,
+          hi: `${q} aur ${t} par CZ: yeh sirf tab minus sign lagata hai jab dono qubits |1⟩ hon. Yeh phase change hai, isliye measured results same rehte hain.`,
+        };
+      }
+      return {
+        en: `CZ on ${q} and ${t}: it flips the phase of the part where both are |1⟩. The odds do not change right now, but the two qubits can become linked — a later H would reveal it.`,
+        hi: `${q} aur ${t} par CZ: jahan dono |1⟩ hain us part ka phase flip hota hai. Abhi probability change nahi hoti, lekin dono qubits linked ho sakte hain — baad ka H use reveal karega.`,
+      };
+    }
+
+    case "SWAP": {
+      const t = `q${gate.target}`;
+      return {
+        en: `SWAP exchanges ${q} and ${t}: whatever state ${q} had is now on ${t}, and the other way round.`,
+        hi: `SWAP ${q} aur ${t} ko exchange karta hai: ${q} ka state ab ${t} par hai, aur ${t} ka ${q} par.`,
+      };
+    }
+
+    case "CCX": {
+      const c2 = `q${gate.control2}`;
+      const t = `q${gate.target}`;
+      const second = kindOf(before[gate.control2 as number]);
+      if (was === "one" && second === "one") {
+        return {
+          en: `CCX (Toffoli): both controls ${q} and ${c2} are |1⟩, so the target ${t} is flipped.`,
+          hi: `CCX (Toffoli): dono controls ${q} aur ${c2} |1⟩ hain, isliye target ${t} flip ho jaata hai.`,
+        };
+      }
+      if (was === "zero" || second === "zero") {
+        return {
+          en: `CCX (Toffoli): at least one control is |0⟩, so the target ${t} is left alone.`,
+          hi: `CCX (Toffoli): kam se kam ek control |0⟩ hai, isliye target ${t} ko kuch nahi hota.`,
+        };
+      }
+      return {
+        en: `CCX (Toffoli): ${t} flips only in the part of the state where both ${q} and ${c2} are 1.`,
+        hi: `CCX (Toffoli): ${t} sirf us part mein flip hota hai jahan ${q} aur ${c2} dono 1 hain.`,
+      };
+    }
+
     case "CX": {
       const t = `q${gate.target}`;
       const targetNow = kindOf(after[gate.target as number]);
@@ -173,19 +252,30 @@ export function explainCircuit(result: SimulationSuccess): Explanation {
     const list = names.slice(0, -1).join(", ") + " or " + names[names.length - 1];
     const listHi = names.slice(0, -1).join(", ") + " ya " + names[names.length - 1];
     const share = Math.round(outcomes[0][1] * 100);
+    const uniform = outcomes.every(([, p]) => Math.abs(p - outcomes[0][1]) < 0.005);
     const linked =
       result.measuredQubits.length === 2 &&
       outcomes.length === 2 &&
       result.bloch.some((v) => Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z) < 0.99);
-    summary = linked
-      ? {
-          en: `So you only ever see ${list}, about ${share}% each. Knowing one qubit's result tells you the other's — that link is entanglement.`,
-          hi: `Isliye sirf ${listHi} hi dikhta hai, lagbhag ${share}% each. Ek qubit ka result pata chalte hi doosre ka bhi pata chal jaata hai — yahi link entanglement hai.`,
-        }
-      : {
-          en: `So you see ${list}, about ${share}% each. The counts are close to, but not exactly, ${share}% because every run is a fresh random draw.`,
-          hi: `Isliye ${listHi} dikhta hai, lagbhag ${share}% each. Counts exactly ${share}% nahi hote kyunki har run ek naya random draw hai.`,
-        };
+    if (!uniform) {
+      // Unequal odds (for example after a rotation gate): name each result with its own share.
+      const parts = outcomes.map(([bits, p]) => `${ket(bits)} about ${Math.round(p * 100)}%`);
+      const partsHi = outcomes.map(([bits, p]) => `${ket(bits)} lagbhag ${Math.round(p * 100)}%`);
+      summary = {
+        en: `So the results are not equally likely: ${parts.join(", ")}. The counts are close to, but not exactly, those values because every run is a fresh random draw.`,
+        hi: `Isliye results equally likely nahi hain: ${partsHi.join(", ")}. Counts exactly itne nahi hote kyunki har run ek naya random draw hai.`,
+      };
+    } else {
+      summary = linked
+        ? {
+            en: `So you only ever see ${list}, about ${share}% each. Knowing one qubit's result tells you the other's — that link is entanglement.`,
+            hi: `Isliye sirf ${listHi} hi dikhta hai, lagbhag ${share}% each. Ek qubit ka result pata chalte hi doosre ka bhi pata chal jaata hai — yahi link entanglement hai.`,
+          }
+        : {
+            en: `So you see ${list}, about ${share}% each. The counts are close to, but not exactly, ${share}% because every run is a fresh random draw — that is normal sampling variation, not an error.`,
+            hi: `Isliye ${listHi} dikhta hai, lagbhag ${share}% each. Counts exactly ${share}% nahi hote kyunki har run ek naya random draw hai — yeh normal sampling variation hai, error nahi.`,
+          };
+    }
   }
 
   return { steps, summary };

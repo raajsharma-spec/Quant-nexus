@@ -6,12 +6,18 @@
  * it was chosen. Rules are tried from top to bottom; the first match wins.
  */
 
-import { requiredChallenges } from "@/data/challenges";
+import { findChallenge } from "@/data/challenges";
+import { coreExperiment } from "@/data/concepts";
+import { conceptContent } from "@/data/curriculum";
 import { INTERACTIVE_TOPICS, topicTitle } from "@/data/topics";
+import { assessmentSlots, DEMONSTRATED, slotLabel } from "./adaptiveAssessment";
 import { computeInsights } from "./analytics";
-import { allMastered, currentTopic, nextTopic, topicMastery } from "./mastery";
+import { allMastered, canOpenStage, currentStageOf, currentTopic, topicMastery } from "./mastery";
+import { activeMisconceptions } from "./misconceptions";
+import { dueReviews } from "./review";
+import { progressOf, stageScore } from "./stages";
 import type { AppState } from "./storage";
-import type { L, TopicId } from "./types";
+import { STAGE_IDS, stageMeta, type L, type StageId, type TopicId } from "./types";
 
 export interface Recommendation {
   ruleId: string;
@@ -27,44 +33,123 @@ export interface Recommendation {
 /** The rules, in the order they are checked. Also displayed on the Progress and Architecture pages. */
 export const RULES: Array<{ id: string; when: string; then: string }> = [
   {
-    id: "python-first",
-    when: "Python comfort is “Beginner” and Python Foundations is not finished",
-    then: "Recommend Python Foundations",
-  },
-  {
     id: "circuit-errors",
     when: "2 or more of the last 5 lab runs ended in a circuit error",
     then: "Recommend Circuit Construction Review",
   },
-  { id: "finish-lesson", when: "The current topic's lesson is not finished", then: "Recommend the lesson" },
+  {
+    id: "misconception",
+    when: "A possible misconception has been detected and is still open",
+    then: "Recommend the challenge that tests it",
+  },
+  {
+    id: "quick-review",
+    when: "A mastered concept is due for its spaced Quick Review",
+    then: "Recommend the one-question review",
+  },
+  { id: "all-mastered", when: "Every available concept is mastered", then: "Recommend free experiments in the lab" },
   {
     id: "prediction-practice",
-    when: "Prediction accuracy for the current topic is below 60% (3+ predictions)",
+    when: "Prediction accuracy for the current concept is below 60% (3+ predictions)",
     then: "Recommend Predict-Before-Run practice",
   },
   {
-    id: "review-weak-concept",
-    when: "The latest mastery check for the current topic scored below 70%",
-    then: "Recommend reviewing the weakest concept",
-  },
-  { id: "finish-practice", when: "Required practice is not complete", then: "Recommend practice" },
-  {
-    id: "take-mastery-check",
-    when: "Lesson and practice are done but the mastery check is not passed",
-    then: "Recommend the mastery check",
+    id: "targeted-retry",
+    when: "The mastery check has been taken but is below the mastery threshold",
+    then: "Recommend the targeted retry on the missed items",
   },
   {
-    id: "resolve-error",
-    when: "Score and practice are complete but the last lab run ended in a circuit error",
-    then: "Recommend running one working circuit",
+    id: "next-topic",
+    when: "The previous concept is mastered and this one has not been started",
+    then: "Recommend starting the next concept",
   },
-  { id: "next-topic", when: "Mastery is at or above the threshold", then: "Recommend the next topic" },
+  {
+    id: "continue-stage",
+    when: "The current stage has not reached the mastery threshold",
+    then: "Recommend continuing that stage",
+  },
 ];
 
 const ruleText = (id: string) => {
   const r = RULES.find((x) => x.id === id);
   return r ? `IF ${r.when} → ${r.then}` : id;
 };
+
+/** What a stage asks the learner to do, in one line. */
+export function stageAction(state: AppState, topic: TopicId, stage: StageId): L {
+  const progress = progressOf(state, topic);
+  const content = conceptContent(topic);
+  const title = topicTitle(topic);
+  switch (stage) {
+    case "discover":
+      return { en: `See what ${title} is about and why it matters.`, hi: `Dekho ${title} kya hai aur kyun matter karta hai.` };
+    case "learn":
+      return { en: "Read the short theory blocks.", hi: "Chhote theory blocks padho." };
+    case "watch":
+      return { en: "Watch the short visual lesson.", hi: "Chhota visual lesson dekho." };
+    case "interact":
+      return { en: "Try the interactive demonstration.", hi: "Interactive demonstration try karo." };
+    case "experiment": {
+      const left = (content?.sandbox.goals.length ?? 0) - progress.goals.length;
+      return {
+        en: `Reach the experiment goals${left > 0 ? ` (${left} left)` : ""}.`,
+        hi: `Experiment goals reach karo${left > 0 ? ` (${left} baaki)` : ""}.`,
+      };
+    }
+    case "ask":
+      return { en: `Ask the tutor one question about ${title}.`, hi: `Tutor se ${title} ke baare mein ek question poochho.` };
+    case "predict": {
+      const core = coreExperiment(topic);
+      if (core?.question) return core.question;
+      return { en: "Predict what the circuit will do.", hi: "Predict karo circuit kya karega." };
+    }
+    case "run":
+      return { en: "Run the circuit you just predicted.", hi: "Jo circuit abhi predict kiya use run karo." };
+    case "observe":
+      return { en: "Read the measurement result and answer the two observation checks.", hi: "Measurement result padho aur do observation checks answer karo." };
+    case "explain":
+      return { en: "Explain in your own words why the result happened.", hi: "Apne words mein explain karo ki result kyun aaya." };
+    case "assess":
+      return progress.assessAttempts > 0
+        ? { en: "Take the targeted retry: only the items you missed.", hi: "Targeted retry lo: sirf wahi items jo miss hue." }
+        : { en: "Take the adaptive mastery check.", hi: "Adaptive mastery check lo." };
+    case "review":
+      return { en: "Read your personalised review.", hi: "Apna personalised review padho." };
+    case "challenge":
+      return { en: "Solve the challenge chosen for you.", hi: "Aapke liye chosen challenge solve karo." };
+  }
+}
+
+export interface NextAction {
+  topic: TopicId;
+  stage: StageId | null;
+  /** 0–100: score in the current stage. */
+  score: number;
+  action: L;
+  href: string;
+}
+
+/** The learner's current concept, stage and the one thing to do next. */
+export function nextAction(state: AppState): NextAction {
+  const topic = currentTopic(state);
+  const stage = currentStageOf(state, topic);
+  if (!stage) {
+    return {
+      topic,
+      stage: null,
+      score: 100,
+      action: { en: "Every available concept is mastered. Experiment freely in the lab.", hi: "Har available concept master ho gaya. Lab mein freely experiment karo." },
+      href: "/lab",
+    };
+  }
+  return {
+    topic,
+    stage,
+    score: stageScore(progressOf(state, topic), stage),
+    action: stageAction(state, topic, stage),
+    href: `/learn/${topic}`,
+  };
+}
 
 export function getRecommendation(state: AppState): Recommendation {
   const insights = computeInsights(state);
@@ -73,23 +158,7 @@ export function getRecommendation(state: AppState): Recommendation {
   const m = topicMastery(state, topic);
   const threshold = state.settings.masteryThreshold;
 
-  // Rule 1 — remove the Python barrier first, for learners who asked for it.
-  if (state.profile?.pythonLevel === "beginner" && !state.lessons.python?.completed) {
-    return {
-      ruleId: "python-first",
-      rule: ruleText("python-first"),
-      title: { en: "Start with Python Foundations", hi: "Python Foundations se start karo" },
-      reason: {
-        en: "Recommended because you told us you are a beginner in Python. A short warm-up makes the quantum examples easier to read. You can skip it any time.",
-        hi: "Recommended kyunki aapne bataya ki aap Python mein beginner ho. Ek chhota warm-up quantum examples ko padhna easy bana deta hai. Aap ise kabhi bhi skip kar sakte ho.",
-      },
-      cta: { en: "Start Python Foundations", hi: "Python Foundations start karo" },
-      href: "/learn/python",
-      topic: "python",
-    };
-  }
-
-  // Rule 2 — repeated circuit errors.
+  // Rule 1 — repeated circuit errors.
   if (insights.recentErrors >= 2) {
     return {
       ruleId: "circuit-errors",
@@ -99,21 +168,65 @@ export function getRecommendation(state: AppState): Recommendation {
         en: `Recommended because ${insights.recentErrors} of your last 5 lab runs stopped with a circuit error. A quick look at how gates and measurement fit on a wire will fix that.`,
         hi: `Recommended kyunki aapke last 5 lab runs mein se ${insights.recentErrors} circuit error par ruk gaye. Gates aur measurement wire par kaise fit hote hain, yeh ek baar dekh lo.`,
       },
-      cta: { en: "Review Quantum Gates", hi: "Quantum Gates review karo" },
-      href: "/learn/gates",
+      cta: { en: "Ask the tutor about circuits", hi: "Tutor se circuits ke baare mein poochho" },
+      href: "/ai-tutor?q=How%20do%20I%20read%20a%20quantum%20circuit%3F",
       topic: "gates",
     };
   }
 
-  // Everything mastered — keep experimenting.
+  // Rule 2 — an open misconception, once the challenge that tests it can be opened.
+  // (Before that, the concept's own Review and Next Challenge stages deal with it.)
+  for (const misconception of activeMisconceptions(state)) {
+    const challenge = findChallenge(misconception.info.challengeId);
+    if (!challenge || !canOpenStage(state, challenge.topic, "predict")) continue;
+    return {
+      ruleId: "misconception",
+      rule: ruleText("misconception"),
+      title: {
+        en: `Clear up: ${misconception.info.title.en}`,
+        hi: `Clear karo: ${misconception.info.title.hi}`,
+      },
+      reason: {
+        en: `Recommended because a possible misconception showed up in your ${misconception.sources.join(" and ")} (confidence ${Math.round(misconception.confidence * 100)}%). ${misconception.info.evidence.en}`,
+        hi: `Recommended kyunki aapke ${misconception.sources.join(" aur ")} mein ek possible misconception dikhi (confidence ${Math.round(misconception.confidence * 100)}%). ${misconception.info.evidence.hi}`,
+      },
+      cta: { en: "Try the targeted challenge", hi: "Targeted challenge try karo" },
+      href: `/practice?challenge=${challenge.id}`,
+      topic: misconception.info.topic,
+    };
+  }
+
+  // Rule 3 — spaced review of something mastered earlier.
+  const due = dueReviews(state)[0];
+  if (due) {
+    return {
+      ruleId: "quick-review",
+      rule: ruleText("quick-review"),
+      title: { en: `Quick Review: ${topicTitle(due)}`, hi: `Quick Review: ${topicTitle(due)}` },
+      reason: state.reviews[due]?.needsReview
+        ? {
+            en: `Recommended because you missed the last quick review of ${topicTitle(due)}. One short question keeps it fresh.`,
+            hi: `Recommended kyunki ${topicTitle(due)} ka last quick review miss hua. Ek chhota question ise fresh rakhega.`,
+          }
+        : {
+            en: `Recommended because you mastered ${topicTitle(due)} a while ago. One short question checks that it has stuck.`,
+            hi: `Recommended kyunki aapne ${topicTitle(due)} kuch time pehle master kiya tha. Ek chhota question check karega ki yaad hai.`,
+          },
+      cta: { en: "Answer one question", hi: "Ek question answer karo" },
+      href: `/practice?review=${due}`,
+      topic: due,
+    };
+  }
+
+  // Rule 4 — everything mastered.
   if (allMastered(state)) {
     return {
-      ruleId: "next-topic",
-      rule: ruleText("next-topic"),
+      ruleId: "all-mastered",
+      rule: ruleText("all-mastered"),
       title: { en: "Experiment freely in the Quantum Lab", hi: "Quantum Lab mein freely experiment karo" },
       reason: {
-        en: "Recommended because you have mastered every module available in this MVP. Build your own circuits and keep testing your predictions.",
-        hi: "Recommended kyunki aapne is MVP ke saare available modules master kar liye hain. Apne circuits banao aur predictions test karte raho.",
+        en: "Recommended because you have mastered every concept available in this build. Build your own circuits and keep testing your predictions.",
+        hi: "Recommended kyunki aapne is build ke saare available concepts master kar liye hain. Apne circuits banao aur predictions test karte raho.",
       },
       cta: { en: "Open Quantum Lab", hi: "Quantum Lab kholo" },
       href: "/lab",
@@ -121,53 +234,14 @@ export function getRecommendation(state: AppState): Recommendation {
     };
   }
 
-  // Rule 3 — learn before you practise.
-  if (!m.lessonCompleted) {
-    const started = !!state.lessons[topic];
-    const index = INTERACTIVE_TOPICS.indexOf(topic);
-    const previous = index > 0 ? INTERACTIVE_TOPICS[index - 1] : null;
+  const stage = m.stage ?? "discover";
+  const meta = stageMeta(stage);
+  const stageIndex = STAGE_IDS.indexOf(stage);
+  const upcoming = STAGE_IDS[stageIndex + 1];
 
-    // Rule 8 — the previous topic was mastered, so this one has just unlocked.
-    if (!started && previous) {
-      const best = topicMastery(state, previous).bestScore ?? threshold;
-      return {
-        ruleId: "next-topic",
-        rule: ruleText("next-topic"),
-        title: { en: `Start ${title}`, hi: `${title} start karo` },
-        reason: {
-          en: `Recommended because you scored ${best}% in ${topicTitle(previous)} — at or above the ${threshold}% mastery threshold — so ${title} is now unlocked.`,
-          hi: `Recommended kyunki aapne ${topicTitle(previous)} mein ${best}% score kiya — jo ${threshold}% mastery threshold ke barabar ya upar hai — isliye ${title} ab unlock ho gaya hai.`,
-        },
-        cta: { en: "Start lesson", hi: "Lesson start karo" },
-        href: `/learn/${topic}`,
-        topic,
-      };
-    }
-
-    return {
-      ruleId: "finish-lesson",
-      rule: ruleText("finish-lesson"),
-      title: {
-        en: `${started ? "Continue" : "Start"} ${title}`,
-        hi: `${title} ${started ? "continue" : "start"} karo`,
-      },
-      reason: {
-        en: started
-          ? `Recommended because you have started ${title} but not finished the lesson yet.`
-          : `Recommended because ${title} is the first concept on your roadmap.`,
-        hi: started
-          ? `Recommended kyunki aapne ${title} start kiya hai lekin lesson abhi complete nahi hua.`
-          : `Recommended kyunki ${title} aapke roadmap ka pehla concept hai.`,
-      },
-      cta: { en: started ? "Continue lesson" : "Start lesson", hi: started ? "Lesson continue karo" : "Lesson start karo" },
-      href: `/learn/${topic}`,
-      topic,
-    };
-  }
-
-  // Rule 4 — prediction accuracy below 60%.
+  // Rule 5 — prediction accuracy below 60%, once practice is open.
   const acc = insights.predictionByTopic[topic];
-  if (acc && acc.total >= 3 && acc.accuracy !== null && acc.accuracy < 60) {
+  if (acc && acc.total >= 3 && acc.accuracy !== null && acc.accuracy < 60 && canOpenStage(state, topic, "predict")) {
     return {
       ruleId: "prediction-practice",
       rule: ruleText("prediction-practice"),
@@ -182,77 +256,64 @@ export function getRecommendation(state: AppState): Recommendation {
     };
   }
 
-  // Rule 5 — a weak mastery check points at a concept to review.
-  if (m.lastScore !== null && m.lastScore < 70 && !m.assessmentPassed) {
-    const weak = insights.weakConcepts.find((w) => w.topic === topic && w.reason === "mastery-check");
-    const concept = weak?.concept ?? title;
+  // Rule 6 — the mastery check was taken but is below the gate.
+  if (stage === "assess" && m.attempts > 0) {
+    const progress = progressOf(state, topic);
+    const missed = assessmentSlots(topic)
+      .filter((slot) => (progress.assess[slot]?.credit ?? 0) < DEMONSTRATED)
+      .map((slot) => slotLabel(topic, slot));
     return {
-      ruleId: "review-weak-concept",
-      rule: ruleText("review-weak-concept"),
-      title: { en: `Review ${concept}`, hi: `${concept} review karo` },
+      ruleId: "targeted-retry",
+      rule: ruleText("targeted-retry"),
+      title: { en: `Targeted retry: ${title}`, hi: `Targeted retry: ${title}` },
       reason: {
-        en: `Recommended because your last ${title} mastery check scored ${m.lastScore}%, and ${concept} was the concept you missed.`,
-        hi: `Recommended kyunki aapke last ${title} mastery check mein ${m.lastScore}% aaya, aur ${concept} wala concept miss hua.`,
+        en: `Recommended because your ${title} mastery check is at ${m.bestScore}% and ${threshold}% is needed. Only the ${missed.length} missed ${missed.length === 1 ? "item comes" : "items come"} back: ${missed.join(", ")}.`,
+        hi: `Recommended kyunki aapka ${title} mastery check ${m.bestScore}% par hai aur ${threshold}% chahiye. Sirf ${missed.length} missed ${missed.length === 1 ? "item" : "items"} wapas aayenge: ${missed.join(", ")}.`,
       },
-      cta: { en: "Review the lesson", hi: "Lesson review karo" },
+      cta: { en: "Take the targeted retry", hi: "Targeted retry lo" },
+      href: `/learn/${topic}?stage=assess`,
+      topic,
+    };
+  }
+
+  // Rule 7 — the previous concept is mastered and this one is untouched.
+  const index = INTERACTIVE_TOPICS.indexOf(topic);
+  const previous = index > 0 ? INTERACTIVE_TOPICS[index - 1] : null;
+  if (previous && !state.concepts[topic]) {
+    return {
+      ruleId: "next-topic",
+      rule: ruleText("next-topic"),
+      title: { en: `Start ${title}`, hi: `${title} start karo` },
+      reason: {
+        en: `Recommended because every stage of ${topicTitle(previous)} reached ${threshold}% mastery, so ${title} is now unlocked.`,
+        hi: `Recommended kyunki ${topicTitle(previous)} ka har stage ${threshold}% mastery tak pahunch gaya, isliye ${title} ab unlock ho gaya hai.`,
+      },
+      cta: { en: "Start the concept", hi: "Concept start karo" },
       href: `/learn/${topic}`,
       topic,
     };
   }
 
-  // Rule 6 — required practice.
-  if (!m.practiceDone) {
-    const left = requiredChallenges(topic).length - m.practiceSolved;
-    return {
-      ruleId: "finish-practice",
-      rule: ruleText("finish-practice"),
-      title: { en: `Practice ${title}`, hi: `${title} practice karo` },
-      reason: {
-        en: `Recommended because ${left} required ${left === 1 ? "challenge is" : "challenges are"} still open for ${title}. Practice is needed to unlock the next topic.`,
-        hi: `Recommended kyunki ${title} ke ${left} required ${left === 1 ? "challenge" : "challenges"} abhi baaki hain. Next topic unlock karne ke liye practice zaroori hai.`,
-      },
-      cta: { en: "Start practice", hi: "Practice start karo" },
-      href: `/practice?topic=${topic}`,
-      topic,
-    };
-  }
-
-  // Rule 7 — ready for the mastery check.
-  if (!m.assessmentPassed) {
-    const retry = m.attempts > 0;
-    return {
-      ruleId: "take-mastery-check",
-      rule: ruleText("take-mastery-check"),
-      title: {
-        en: `${retry ? "Retry" : "Take"} the ${title} mastery check`,
-        hi: `${title} mastery check ${retry ? "retry" : "do"}`,
-      },
-      reason: {
-        en: retry
-          ? `Recommended because your best score is ${m.bestScore}% and you need ${threshold}% to unlock the next topic. You're getting closer.`
-          : `Recommended because you finished the lesson and the required practice. Score ${threshold}% or more to unlock the next topic.`,
-        hi: retry
-          ? `Recommended kyunki aapka best score ${m.bestScore}% hai aur next topic unlock karne ke liye ${threshold}% chahiye. Aap close ho.`
-          : `Recommended kyunki aapne lesson aur required practice complete kar li hai. Next topic unlock karne ke liye ${threshold}% ya zyada score karo.`,
-      },
-      cta: { en: retry ? "Retry mastery check" : "Start mastery check", hi: retry ? "Mastery check retry karo" : "Mastery check start karo" },
-      href: `/assessment?topic=${topic}`,
-      topic,
-    };
-  }
-
-  // Last case — score and practice are done but the last lab run failed.
-  const upcoming = nextTopic(topic);
+  // Rule 8 — carry on with the current stage.
+  const started = !!state.concepts[topic];
   return {
-    ruleId: "resolve-error",
-    rule: ruleText("resolve-error"),
-    title: { en: "Fix your last lab run", hi: "Apna last lab run fix karo" },
-    reason: {
-      en: `Recommended because your ${title} score and practice are complete, but your last lab run stopped with a circuit error. Run one working circuit to unlock ${upcoming ? topicTitle(upcoming) : "the next topic"}.`,
-      hi: `Recommended kyunki ${title} ka score aur practice complete hai, lekin aapka last lab run circuit error par ruk gaya. ${upcoming ? topicTitle(upcoming) : "Next topic"} unlock karne ke liye ek working circuit run karo.`,
+    ruleId: "continue-stage",
+    rule: ruleText("continue-stage"),
+    title: {
+      en: `${started ? "Continue" : "Start"} ${title}: ${meta.label}`,
+      hi: `${title} ${started ? "continue" : "start"} karo: ${meta.label}`,
     },
-    cta: { en: "Open Quantum Lab", hi: "Quantum Lab kholo" },
-    href: "/lab",
+    reason: started
+      ? {
+          en: `Recommended because you are on stage ${meta.number} ${meta.label.toUpperCase()}, currently at ${m.stageScore}%. Reaching ${threshold}% unlocks ${upcoming ? stageMeta(upcoming).label.toUpperCase() : "the next concept"}.`,
+          hi: `Recommended kyunki aap stage ${meta.number} ${meta.label.toUpperCase()} par ho, abhi ${m.stageScore}% par. ${threshold}% reach karne par ${upcoming ? stageMeta(upcoming).label.toUpperCase() : "next concept"} unlock hoga.`,
+        }
+      : {
+          en: `Recommended because ${title} is the first concept on your roadmap.`,
+          hi: `Recommended kyunki ${title} aapke roadmap ka pehla concept hai.`,
+        },
+    cta: { en: started ? "Continue learning" : "Start learning", hi: started ? "Learning continue karo" : "Learning start karo" },
+    href: `/learn/${topic}`,
     topic,
   };
 }

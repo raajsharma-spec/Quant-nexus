@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  BookMarked,
   BookOpen,
   ClipboardCheck,
   FlaskConical,
@@ -11,6 +12,7 @@ import {
   MessageCircleQuestion,
   Network,
   RotateCcw,
+  Settings,
   Target,
   TrendingUp,
   Trophy,
@@ -38,6 +40,8 @@ const MAIN: NavItem[] = [
 const LOWER: NavItem[] = [
   { href: "/educator", label: "Educator Insights", icon: GraduationCap },
   { href: "/architecture", label: "Architecture", icon: Network },
+  { href: "/references", label: "References", icon: BookMarked },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function Sidebar({

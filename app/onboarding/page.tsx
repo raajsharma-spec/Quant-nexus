@@ -5,26 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { useApp } from "@/components/AppProvider";
 import { Wordmark } from "@/components/Logo";
-import type { PythonLevel } from "@/lib/storage";
 import type { Lang } from "@/lib/types";
-
-const PYTHON_OPTIONS: Array<{ value: PythonLevel; title: string; body: string }> = [
-  {
-    value: "beginner",
-    title: "I'm a Beginner",
-    body: "I have not written Python before, or only a little.",
-  },
-  {
-    value: "basics",
-    title: "I Know the Basics",
-    body: "Variables, if statements and loops look familiar.",
-  },
-  {
-    value: "comfortable",
-    title: "I'm Comfortable",
-    body: "I can write functions and work with lists.",
-  },
-];
 
 const LANGUAGE_OPTIONS: Array<{ value: Lang; title: string; sample: string }> = [
   {
@@ -44,7 +25,6 @@ export default function OnboardingPage() {
   const { ready, state, actions } = useApp();
   const router = useRouter();
   const [step, setStep] = useState(0);
-  const [python, setPython] = useState<PythonLevel | null>(null);
   const [language, setLanguage] = useState<Lang | null>(null);
 
   const profile = state.profile;
@@ -55,20 +35,33 @@ export default function OnboardingPage() {
   if (!ready || !profile) return null;
 
   const finish = (href: string) => {
-    if (!python || !language) return;
-    actions.completeOnboarding(python, language);
+    if (!language) return;
+    actions.completeOnboarding(language);
     router.push(href);
   };
 
-  const beginner = python === "beginner";
   const hinglish = language === "hi";
+  const threshold = state.settings.masteryThreshold;
+  const points = hinglish
+    ? [
+        "Har concept 13 chhote stages mein hai: Discover se Next Challenge tak.",
+        `Next stage tab open hota hai jab current stage ${threshold}% par pahunche. Jitni baar chaho retry karo.`,
+        "Circuit run karne se pehle aap hamesha predict karte ho, phir result explain karte ho.",
+        "Aapka level hum poochhte nahi — woh aapke kaam se samjha jaata hai aur difficulty usi se adjust hoti hai.",
+      ]
+    : [
+        "Every concept is 13 short stages, from Discover to Next Challenge.",
+        `The next stage opens when the current one reaches ${threshold}%. Retry as often as you like.`,
+        "You always predict before a circuit runs, then explain the result in your own words.",
+        "We never ask your level — it is worked out from what you do, and the difficulty adjusts to it.",
+      ];
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 py-6 sm:px-6">
       <header className="flex items-center justify-between">
         <Wordmark compact />
         <p className="text-sm text-mute" aria-live="polite">
-          Step {step + 1} of 3
+          Step {step + 1} of 2
         </p>
       </header>
 
@@ -77,40 +70,19 @@ export default function OnboardingPage() {
         aria-label="Onboarding progress"
         aria-valuenow={step + 1}
         aria-valuemin={1}
-        aria-valuemax={3}
-        className="mt-5 grid grid-cols-3 gap-2"
+        aria-valuemax={2}
+        className="mt-5 grid grid-cols-2 gap-2"
       >
-        {[0, 1, 2].map((i) => (
+        {[0, 1].map((i) => (
           <span key={i} className={`h-1.5 rounded-full ${i <= step ? "bg-ket" : "bg-white/10"}`} />
         ))}
       </div>
 
       <main id="main" className="flex flex-1 flex-col justify-center py-10">
         {step === 0 && (
-          <section aria-labelledby="python-title" className="animate-rise">
-            <p className="text-mute">
-              Hi {profile.name}. Let&apos;s understand where you&apos;re starting.
-            </p>
-            <h1 id="python-title" className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
-              How comfortable are you with Python?
-            </h1>
-            <div role="radiogroup" aria-labelledby="python-title" className="mt-7 grid gap-3">
-              {PYTHON_OPTIONS.map((option) => (
-                <ChoiceCard
-                  key={option.value}
-                  selected={python === option.value}
-                  onSelect={() => setPython(option.value)}
-                  title={option.title}
-                  body={option.body}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {step === 1 && (
           <section aria-labelledby="language-title" className="animate-rise">
-            <h1 id="language-title" className="text-3xl font-semibold tracking-tight sm:text-4xl">
+            <p className="text-mute">Hi {profile.name}. One choice before you start.</p>
+            <h1 id="language-title" className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
               How would you like to learn?
             </h1>
             <p className="mt-2 max-w-[60ch] text-mute">
@@ -131,53 +103,35 @@ export default function OnboardingPage() {
           </section>
         )}
 
-        {step === 2 && (
+        {step === 1 && (
           <section aria-labelledby="start-title" className="animate-rise">
-            <p className="text-mute">
-              {hinglish ? "Aapka starting point ready hai." : "Your starting point is ready."}
-            </p>
+            <p className="text-mute">{hinglish ? "Aap ready ho." : "You are ready."}</p>
             <h1 id="start-title" className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
-              {beginner
-                ? hinglish
-                  ? "Pehle Python Foundations"
-                  : "First stop: Python Foundations"
-                : hinglish
-                  ? "Aap Quantum Fundamentals ke liye ready ho"
-                  : "You're ready for Quantum Fundamentals"}
+              {hinglish ? "Quantum Nexus aise kaam karta hai" : "How Quantum Nexus works"}
             </h1>
-            <p className="mt-3 max-w-[60ch] text-lg leading-relaxed text-mute">
-              {beginner
-                ? hinglish
-                  ? "Aapne bataya ki aap Python mein beginner ho. Ek chhota warm-up — variables, conditions, loops, functions aur lists — quantum examples ko padhna easy bana dega. Aap ise kabhi bhi skip kar sakte ho."
-                  : "You said you are new to Python. A short warm-up — variables, conditions, loops, functions and lists — will make the quantum examples easier to read. You can skip it any time."
-                : hinglish
-                  ? "Aapko Python aata hai, isliye hum seedha qubits se start karenge. Python Foundations Learn page par available rahega agar kabhi refresh karna ho."
-                  : "You already know some Python, so we will go straight to qubits. Python Foundations stays available on the Learn page if you ever want a refresher."}
-            </p>
+            <ul className="mt-5 flex max-w-[62ch] flex-col gap-3">
+              {points.map((point) => (
+                <li key={point} className="flex gap-3 text-lg leading-relaxed text-ink/90">
+                  <Check size={20} className="mt-1 shrink-0 text-ok" aria-hidden />
+                  <span>{point}</span>
+                </li>
+              ))}
+            </ul>
 
             <div className="mt-8 flex flex-wrap gap-3">
-              {beginner ? (
-                <>
-                  <button type="button" onClick={() => finish("/learn/python")} className="btn btn-primary px-5 py-3 text-base">
-                    Start Python Foundations
-                    <ArrowRight size={18} aria-hidden />
-                  </button>
-                  <button type="button" onClick={() => finish("/dashboard")} className="btn btn-secondary px-5 py-3 text-base">
-                    Skip to my dashboard
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button type="button" onClick={() => finish("/dashboard")} className="btn btn-primary px-5 py-3 text-base">
-                    Go to my dashboard
-                    <ArrowRight size={18} aria-hidden />
-                  </button>
-                  <button type="button" onClick={() => finish("/learn/qubit")} className="btn btn-secondary px-5 py-3 text-base">
-                    Start Qubit Fundamentals
-                  </button>
-                </>
-              )}
+              <button type="button" onClick={() => finish("/learn/qubit")} className="btn btn-primary px-5 py-3 text-base">
+                {hinglish ? "Qubit Fundamentals start karo" : "Start Qubit Fundamentals"}
+                <ArrowRight size={18} aria-hidden />
+              </button>
+              <button type="button" onClick={() => finish("/dashboard")} className="btn btn-secondary px-5 py-3 text-base">
+                {hinglish ? "Pehle dashboard dekho" : "See my dashboard first"}
+              </button>
             </div>
+            <p className="mt-4 text-sm text-dim">
+              {hinglish
+                ? "Python naya hai? Learn page par ek optional Python Foundations warm-up hai. Yeh kuch block nahi karta."
+                : "New to Python? There is an optional Python Foundations warm-up on the Learn page. It never blocks anything."}
+            </p>
           </section>
         )}
       </main>
@@ -192,13 +146,8 @@ export default function OnboardingPage() {
           <ArrowLeft size={17} aria-hidden />
           Back
         </button>
-        {step < 2 && (
-          <button
-            type="button"
-            onClick={() => setStep((s) => s + 1)}
-            disabled={step === 0 ? !python : !language}
-            className="btn btn-primary px-5"
-          >
+        {step < 1 && (
+          <button type="button" onClick={() => setStep(1)} disabled={!language} className="btn btn-primary px-5">
             Continue
             <ArrowRight size={17} aria-hidden />
           </button>

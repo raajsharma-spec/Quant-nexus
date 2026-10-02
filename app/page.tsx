@@ -3,6 +3,7 @@ import { BadgeCheck, Cpu, Eye, Languages, ShieldCheck, Target, WifiOff } from "l
 import { HeroDemo } from "@/components/HeroDemo";
 import { JourneyLoop } from "@/components/JourneyLoop";
 import { Wordmark } from "@/components/Logo";
+import { RESEARCH_GAP } from "@/data/references";
 
 const DIFFERENCE = [
   {
@@ -13,30 +14,30 @@ const DIFFERENCE = [
   {
     icon: Eye,
     title: "Your prediction vs what actually happened",
-    body: "The circuit runs in a local simulator and the result is set beside your guess, so the gap is impossible to miss.",
+    body: "The circuit runs in a simulator and the real counts are set beside your guess, so the gap is impossible to miss.",
   },
   {
     icon: BadgeCheck,
-    title: "Understand why, then unlock",
-    body: "A step-by-step explanation follows every run. Mastery checks and practice unlock the next concept when you are ready.",
+    title: "Explain it yourself, then unlock",
+    body: "After every core experiment you say why it happened, in your own words. Each stage opens only when the one before it reaches 90% mastery.",
   },
 ];
 
 const HONEST = [
   {
     icon: Cpu,
-    title: "Local Educational Quantum Simulator",
-    body: "Circuits run in TypeScript inside your browser. No real quantum hardware is used or claimed.",
+    title: "An educational quantum simulator",
+    body: "Circuits run in your browser, or on an optional Qiskit Aer service. No real quantum hardware is used or claimed.",
   },
   {
     icon: ShieldCheck,
-    title: "Contextual, rule-based tutor",
-    body: "The AI Tutor and recommendations follow transparent rules. This MVP does not use a trained AI model.",
+    title: "A tutor grounded in verified content",
+    body: "The AI Tutor retrieves from a verified knowledge base and names its sources. It follows transparent rules; no LLM or trained model is connected.",
   },
   {
     icon: WifiOff,
-    title: "No accounts, keys or servers",
-    body: "Progress is saved in this browser only. Nothing is sent anywhere, and nothing costs money to run.",
+    title: "No accounts, keys or payments",
+    body: "Progress is saved in this browser only. Nothing you type is sent anywhere, and nothing costs money to run.",
   },
   {
     icon: Languages,
@@ -97,11 +98,12 @@ export default function LandingPage() {
         {/* The loop */}
         <section aria-labelledby="loop-title" className="panel p-5 sm:p-8">
           <h2 id="loop-title" className="text-2xl font-semibold tracking-tight">
-            One loop, eight steps
+            One loop, thirteen stages
           </h2>
-          <p className="mt-2 max-w-[64ch] text-mute">
-            Quantum Nexus is built around a single learning loop, drawn here the way you will soon
-            read a circuit: one wire, left to right.
+          <p className="mt-2 max-w-[68ch] text-mute">
+            Every concept follows the same loop, drawn here the way you will soon read a circuit: one wire, left to
+            right. A stage opens when the one before it reaches 90% mastery; finishing all thirteen masters the
+            concept and unlocks the next.
           </p>
           <div className="mt-7">
             <JourneyLoop />
@@ -124,10 +126,29 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* Where it sits among existing resources */}
+        <section aria-labelledby="gap-title" className="panel mb-16 p-5 sm:p-8">
+          <h2 id="gap-title" className="text-2xl font-semibold tracking-tight">
+            Where Quantum Nexus fits
+          </h2>
+          <p className="mt-2 max-w-[72ch] leading-relaxed text-mute">{RESEARCH_GAP.existing}</p>
+          <p className="mt-2 max-w-[72ch] leading-relaxed text-ink/90">{RESEARCH_GAP.contribution}</p>
+          <ul className="mt-4 flex flex-wrap gap-2">
+            {RESEARCH_GAP.parts.map((part) => (
+              <li key={part} className="tag text-mute">
+                {part}
+              </li>
+            ))}
+          </ul>
+          <Link href="/login?next=/references" className="btn btn-ghost mt-4 px-0 text-ket">
+            See the resources we compared against
+          </Link>
+        </section>
+
         {/* Honest positioning */}
         <section aria-labelledby="honest-title" className="pb-16">
           <h2 id="honest-title" className="text-2xl font-semibold tracking-tight">
-            What this MVP is, exactly
+            What this build is, exactly
           </h2>
           <dl className="mt-6 grid gap-x-10 gap-y-6 sm:grid-cols-2">
             {HONEST.map((item) => (
@@ -154,7 +175,7 @@ export default function LandingPage() {
       </main>
 
       <footer className="border-t border-line py-6 text-sm text-dim">
-        Quantum Nexus MVP. Smart India Hackathon 2026, PS 26140, Software category.
+        Quantum Nexus. Smart India Hackathon 2026, PS 26140, Software category.
       </footer>
     </div>
   );

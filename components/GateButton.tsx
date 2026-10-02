@@ -24,9 +24,49 @@ export const GATE_INFO: Record<GateType, { name: string; does: string; className
     does: "Changes the phase of |1⟩",
     className: "border-phase/60 bg-phase/15 text-phase",
   },
+  S: {
+    name: "S (phase)",
+    does: "Quarter-turn of phase on |1⟩",
+    className: "border-phase/60 bg-phase/15 text-phase",
+  },
+  T: {
+    name: "T (π/8)",
+    does: "Eighth-turn of phase on |1⟩",
+    className: "border-phase/60 bg-phase/15 text-phase",
+  },
+  RX: {
+    name: "Rotate X",
+    does: "Turns the state around the X axis",
+    className: "border-ok/60 bg-ok/15 text-ok",
+  },
+  RY: {
+    name: "Rotate Y",
+    does: "Turns the state around the Y axis",
+    className: "border-ok/60 bg-ok/15 text-ok",
+  },
+  RZ: {
+    name: "Rotate Z",
+    does: "Turns the phase around the Z axis",
+    className: "border-ok/60 bg-ok/15 text-ok",
+  },
   CX: {
     name: "Controlled-X",
     does: "Flips the target if the control is |1⟩",
+    className: "border-signal/60 bg-signal/15 text-signal",
+  },
+  CZ: {
+    name: "Controlled-Z",
+    does: "Phase flip when both qubits are |1⟩",
+    className: "border-signal/60 bg-signal/15 text-signal",
+  },
+  SWAP: {
+    name: "Swap",
+    does: "Exchanges two qubits",
+    className: "border-signal/60 bg-signal/15 text-signal",
+  },
+  CCX: {
+    name: "Toffoli",
+    does: "Flips the target if both controls are |1⟩",
     className: "border-signal/60 bg-signal/15 text-signal",
   },
   M: {
@@ -53,14 +93,16 @@ export function GateButton({
       onClick={() => onSelect(gate)}
       aria-pressed={selected}
       title={`${info.name}: ${info.does}`}
-      className={`flex min-w-[8.5rem] flex-1 items-center gap-3 rounded-xl border p-2 text-left transition-colors ${
+      className={`flex min-w-[9.5rem] flex-1 items-center gap-3 rounded-xl border p-2 text-left transition-colors ${
         selected
           ? "border-ket bg-ket/10"
           : "border-line bg-white/[0.02] hover:border-ink/30 hover:bg-white/[0.05]"
       }`}
     >
       <span
-        className={`ket flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border text-sm font-semibold ${info.className}`}
+        className={`ket flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border font-semibold ${
+          gate.length > 2 ? "text-[0.65rem]" : "text-sm"
+        } ${info.className}`}
       >
         {gate}
       </span>

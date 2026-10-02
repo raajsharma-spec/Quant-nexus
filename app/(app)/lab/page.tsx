@@ -1,58 +1,47 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, Eraser, Lock, MessageCircleQuestion, Pencil, RotateCcw, Sparkles } from "lucide-react";
 import { useApp } from "@/components/AppProvider";
+import { BlochSphere3D } from "@/components/BlochSphere3D";
+import { CircuitCode } from "@/components/CircuitCode";
+import { CircuitEditor } from "@/components/CircuitEditor";
 import { ExperimentFlow, type FlowStage } from "@/components/ExperimentFlow";
-import { GateButton } from "@/components/GateButton";
+import { ProbabilityBars } from "@/components/ProbabilityBars";
 import { QuantumCircuit } from "@/components/QuantumCircuit";
 import { PageHeader } from "@/components/ui";
+import { BACKEND_LABEL, checkQiskitService, qiskitApiUrl, type BackendId, type ServiceStatus } from "@/lib/execution";
 import { topicOfCircuit } from "@/lib/prediction";
 import {
   buildCircuit,
   circuitSignature,
   describeCircuit,
-  makeGate,
+  gateWires,
+  stateAfter,
   validateCircuit,
   type Circuit,
-  type CircuitGate,
+  type GateSpec,
   type GateType,
   type SimulationError,
 } from "@/lib/quantumSimulator";
+import { SHOT_OPTIONS } from "@/lib/storage";
 
-const QUBITS = 2;
 const STEPS = 6;
-const PALETTE: GateType[] = ["H", "X", "Y", "Z", "CX", "M"];
+const QUBIT_OPTIONS = [1, 2, 3] as const;
+const BASIC: GateType[] = ["H", "X", "Y", "Z", "S", "T", "CX", "CZ", "SWAP", "M"];
+const ADVANCED: GateType[] = ["RX", "RY", "RZ", "CCX"];
 
-type Spec = Array<[GateType, number, number, number?]>;
-const PRESETS: Array<{ id: string; label: string; spec: Spec }> = [
+const PRESETS: Array<{ id: string; label: string; qubits: number; spec: GateSpec[] }> = [
+  { id: "h", label: "H, then measure", qubits: 1, spec: [["H", 0, 0], ["M", 0, 1]] },
+  { id: "hh", label: "H twice (interference)", qubits: 1, spec: [["H", 0, 0], ["H", 0, 1], ["M", 0, 2]] },
+  { id: "hzh", label: "H, Z, H (phase)", qubits: 1, spec: [["H", 0, 0], ["Z", 0, 1], ["H", 0, 2], ["M", 0, 3]] },
+  { id: "bell", label: "Bell pair (H + CX)", qubits: 2, spec: [["H", 0, 0], ["CX", 0, 1, 1], ["M", 0, 2], ["M", 1, 2]] },
   {
-    id: "h",
-    label: "H, then measure",
-    spec: [
-      ["H", 0, 0],
-      ["M", 0, 1],
-      ["M", 1, 1],
-    ],
-  },
-  {
-    id: "x",
-    label: "X, then measure",
-    spec: [
-      ["X", 0, 0],
-      ["M", 0, 1],
-    ],
-  },
-  {
-    id: "bell",
-    label: "Bell pair (H + CX)",
-    spec: [
-      ["H", 0, 0],
-      ["CX", 0, 1, 1],
-      ["M", 0, 2],
-      ["M", 1, 2],
-    ],
+    id: "ghz",
+    label: "GHZ state (3 qubits)",
+    qubits: 3,
+    spec: [["H", 0, 0], ["CX", 0, 1, 1], ["CX", 1, 2, 2], ["M", 0, 3], ["M", 1, 3], ["M", 2, 3]],
   },
 ];
 
@@ -66,75 +55,76 @@ const STEPPER: Array<{ label: string; stages: Stage[] }> = [
 ];
 const STAGE_ORDER: Stage[] = ["build", "predict", "run", "observe"];
 
-const emptyCircuit = (): Circuit => ({ qubits: QUBITS, steps: STEPS, gates: [] });
+const emptyCircuit = (qubits: number): Circuit => ({ qubits, steps: STEPS, gates: [] });
 
 export default function LabPage() {
-  const { t, actions } = useApp();
-  const [circuit, setCircuit] = useState<Circuit>(emptyCircuit);
-  const [selected, setSelected] = useState<GateType>("H");
+  const { state, t, actions } = useApp();
+  const [circuit, setCircuit] = useState<Circuit>(() => emptyCircuit(2));
   const [stage, setStage] = useState<Stage>("build");
   const [error, setError] = useState<SimulationError | null>(null);
-  const [notice, setNotice] = useState("");
   /** Changes on every new experiment so the prediction panel starts fresh. */
   const [experiment, setExperiment] = useState(0);
+  const [moreGates, setMoreGates] = useState(false);
+  const [qiskitDiagram, setQiskitDiagram] = useState<string | undefined>(undefined);
+  const [service, setService] = useState<ServiceStatus | null>(null);
 
   const building = stage === "build";
+  const advanced = state.settings.advancedMode || moreGates;
+  const palette = useMemo(() => {
+    const base = advanced ? [...BASIC.slice(0, -1), ...ADVANCED, "M" as GateType] : BASIC;
+    // Hide gates that cannot fit on the current number of wires.
+    return base.filter((gate) => {
+      if (gate === "CCX") return circuit.qubits >= 3;
+      if (gate === "CX" || gate === "CZ" || gate === "SWAP") return circuit.qubits >= 2;
+      return true;
+    });
+  }, [advanced, circuit.qubits]);
+
   const signature = useMemo(() => circuitSignature(circuit), [circuit]);
   const topic = useMemo(() => topicOfCircuit(circuit), [circuit]);
+  // The state just before any measurement — computed live from the circuit on screen.
+  const snapshot = useMemo(() => stateAfter(circuit.qubits, circuit.gates), [circuit]);
 
-  const change = (gates: CircuitGate[]) => {
-    setCircuit((c) => ({ ...c, gates }));
+  // A real check of the optional Qiskit service (only when one is configured).
+  const qiskitConfigured = qiskitApiUrl() !== null;
+  useEffect(() => {
+    if (!qiskitConfigured) return;
+    let alive = true;
+    checkQiskitService().then((status) => {
+      if (alive) setService(status);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [qiskitConfigured]);
+
+  const change = (next: Circuit) => {
+    setCircuit(next);
     setError(null);
-    actions.track("circuitEdited", { detail: `${gates.length} gates` });
+    setQiskitDiagram(undefined);
+    actions.track("circuitEdited", { detail: `${next.gates.length} gates` });
   };
 
-  const handleCell = (qubit: number, step: number, existing: CircuitGate | null) => {
-    if (!building) return;
-    setNotice("");
-    if (existing) {
-      change(circuit.gates.filter((g) => g.id !== existing.id));
-      return;
-    }
-    if (selected === "CX") {
-      const target = qubit === 0 ? 1 : 0;
-      const taken = circuit.gates.some(
-        (g) => g.step === step && (g.qubit === target || g.target === target)
-      );
-      if (taken) {
-        setNotice(
-          t({
-            en: `CX needs both wires free in that column. Step ${step + 1} is already used on q${target}.`,
-            hi: `CX ko us column mein dono wires free chahiye. Step ${step + 1} par q${target} already used hai.`,
-          })
-        );
-        return;
-      }
-      change([...circuit.gates, makeGate("CX", qubit, step, target)]);
-      return;
-    }
-    change([...circuit.gates, makeGate(selected, qubit, step)]);
+  const setQubits = (qubits: number) => {
+    // Keep the gates that still fit on the remaining wires.
+    const gates = circuit.gates.filter((gate) => gateWires(gate).every((wire) => wire < qubits));
+    change({ qubits, steps: STEPS, gates });
   };
 
-  const loadPreset = (spec: Spec) => {
-    setCircuit(buildCircuit(QUBITS, spec, STEPS));
+  const loadPreset = (preset: (typeof PRESETS)[number]) => {
+    setCircuit(buildCircuit(preset.qubits, preset.spec, STEPS));
     setStage("build");
     setError(null);
-    setNotice("");
+    setQiskitDiagram(undefined);
     setExperiment((n) => n + 1);
-    actions.track("circuitEdited", { detail: "preset" });
-  };
-
-  const clearCircuit = () => {
-    setNotice("");
-    change([]);
+    actions.track("circuitEdited", { detail: `preset:${preset.id}` });
   };
 
   const resetLab = () => {
-    setCircuit(emptyCircuit());
+    setCircuit(emptyCircuit(circuit.qubits));
     setStage("build");
     setError(null);
-    setNotice("");
-    setSelected("H");
+    setQiskitDiagram(undefined);
     setExperiment((n) => n + 1);
   };
 
@@ -145,22 +135,18 @@ export default function LabPage() {
 
   /** Check the circuit before the learner predicts. Problems are explained, never just rejected. */
   const lockIn = () => {
-    const problem = validateCircuit(circuit);
+    const problem = validateCircuit(circuit, state.settings.shots);
     if (problem) {
       setError(problem);
-      actions.track("executionError", {
-        topic,
-        detail: describeCircuit(circuit),
-        meta: { code: problem.code },
-      });
+      actions.track("executionError", { topic, detail: describeCircuit(circuit), meta: { code: problem.code } });
       return;
     }
     setError(null);
-    setNotice("");
     setStage("predict");
   };
 
   const stageIndex = STAGE_ORDER.indexOf(stage);
+  const backend = state.settings.backend;
 
   return (
     <>
@@ -182,11 +168,7 @@ export default function LabPage() {
             <li key={item.label} className="flex items-center gap-1" aria-current={active ? "step" : undefined}>
               <span
                 className={`rounded-full border px-3 py-1 font-semibold ${
-                  active
-                    ? "border-ket bg-ket/15 text-ket"
-                    : done
-                      ? "border-ok/40 text-ok"
-                      : "border-line text-dim"
+                  active ? "border-ket bg-ket/15 text-ket" : done ? "border-ok/40 text-ok" : "border-line text-dim"
                 }`}
               >
                 {item.label}
@@ -199,18 +181,16 @@ export default function LabPage() {
 
       <div className="flex flex-col gap-5">
         {/* Circuit builder */}
-        <section aria-labelledby="builder-title" className="panel p-4 sm:p-5">
+        <section aria-labelledby="builder-title" className="panel min-w-0 p-4 sm:p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 id="builder-title" className="text-lg font-semibold">
-              {building
-                ? t({ en: "Build your circuit", hi: "Apna circuit banao" })
-                : t({ en: "Your circuit", hi: "Aapka circuit" })}
+              {building ? t({ en: "Build your circuit", hi: "Apna circuit banao" }) : t({ en: "Your circuit", hi: "Aapka circuit" })}
             </h2>
             <div className="flex flex-wrap items-center gap-2">
               {building ? (
                 <button
                   type="button"
-                  onClick={clearCircuit}
+                  onClick={() => change({ ...circuit, gates: [] })}
                   disabled={circuit.gates.length === 0}
                   className="btn btn-ghost px-3 py-2 text-sm"
                 >
@@ -231,6 +211,88 @@ export default function LabPage() {
           </div>
 
           {building && (
+            <div className="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3 text-sm">
+              <div role="group" aria-label="Number of qubits">
+                <p className="mb-1.5 text-mute">{t({ en: "Qubits", hi: "Qubits" })}</p>
+                <div className="flex gap-1.5">
+                  {QUBIT_OPTIONS.map((count) => (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => setQubits(count)}
+                      aria-pressed={circuit.qubits === count}
+                      className={`ket rounded-lg border px-3 py-1.5 font-semibold ${
+                        circuit.qubits === count ? "border-ket bg-ket/15 text-ket" : "border-line text-mute hover:text-ink"
+                      }`}
+                    >
+                      {count}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div role="group" aria-label="Shots per run">
+                <p className="mb-1.5 text-mute">{t({ en: "Shots per run", hi: "Shots per run" })}</p>
+                <div className="flex gap-1.5">
+                  {SHOT_OPTIONS.map((shots) => (
+                    <button
+                      key={shots}
+                      type="button"
+                      onClick={() => actions.updateSettings({ shots })}
+                      aria-pressed={state.settings.shots === shots}
+                      className={`ket rounded-lg border px-3 py-1.5 font-semibold tabular-nums ${
+                        state.settings.shots === shots ? "border-ket bg-ket/15 text-ket" : "border-line text-mute hover:text-ink"
+                      }`}
+                    >
+                      {shots.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label htmlFor="lab-backend" className="mb-1.5 block text-mute">
+                  {t({ en: "Runs on", hi: "Runs on" })}
+                </label>
+                <select
+                  id="lab-backend"
+                  value={backend}
+                  onChange={(event) => actions.updateSettings({ backend: event.target.value as BackendId })}
+                  className="rounded-lg border border-line bg-void/70 px-3 py-2"
+                >
+                  <option value="browser">{BACKEND_LABEL.browser}</option>
+                  <option value="qiskit" disabled={!qiskitConfigured}>
+                    {BACKEND_LABEL.qiskit}
+                    {qiskitConfigured ? "" : " (not connected)"}
+                  </option>
+                </select>
+              </div>
+              {!state.settings.advancedMode && (
+                <label className="flex cursor-pointer items-center gap-2 pb-2 text-mute">
+                  <input
+                    type="checkbox"
+                    checked={moreGates}
+                    onChange={(event) => setMoreGates(event.target.checked)}
+                    className="h-4 w-4 accent-[#5ad7f0]"
+                  />
+                  {t({ en: "Advanced gates (RX, RY, RZ, Toffoli)", hi: "Advanced gates (RX, RY, RZ, Toffoli)" })}
+                </label>
+              )}
+            </div>
+          )}
+
+          {building && backend === "qiskit" && (
+            <p className="mb-3 text-sm text-mute" role="status">
+              {service === null
+                ? t({ en: "Checking the Qiskit service…", hi: "Qiskit service check ho rahi hai…" })
+                : service.available
+                  ? `Qiskit Aer service: reachable${service.engine ? ` (${service.engine})` : ""}.`
+                  : t({
+                      en: "Qiskit Aer service is not reachable right now. Runs will use the browser simulator and say so.",
+                      hi: "Qiskit Aer service abhi reachable nahi hai. Runs browser simulator use karenge aur yeh batayenge.",
+                    })}
+            </p>
+          )}
+
+          {building ? (
             <>
               <p className="mb-2 text-sm text-mute">
                 {t({
@@ -238,35 +300,12 @@ export default function LabPage() {
                   hi: "1. Ek gate choose karo.  2. Wire par kisi spot par click karke place karo.  Placed gate par click karke use hatao.",
                 })}
               </p>
-              <div role="group" aria-label="Gates" className="mb-4 flex flex-wrap gap-2">
-                {PALETTE.map((gate) => (
-                  <GateButton key={gate} gate={gate} selected={selected === gate} onSelect={setSelected} />
-                ))}
-              </div>
+              <CircuitEditor circuit={circuit} onChange={change} palette={palette} />
             </>
-          )}
-
-          <div className={`well px-3 py-2 ${building ? "" : "opacity-95"}`}>
-            <QuantumCircuit
-              circuit={circuit}
-              onCellClick={building ? handleCell : undefined}
-              placing={selected}
-            />
-          </div>
-
-          {building && selected === "CX" && (
-            <p className="mt-2 text-sm text-mute">
-              {t({
-                en: "CX: the wire you click becomes the control (●). The other wire becomes the target (+).",
-                hi: "CX: jis wire par click karoge woh control (●) banega. Doosra wire target (+) banega.",
-              })}
-            </p>
-          )}
-
-          {notice && (
-            <p role="status" className="mt-3 text-sm text-warn">
-              {notice}
-            </p>
+          ) : (
+            <div className="well px-3 py-2">
+              <QuantumCircuit circuit={circuit} />
+            </div>
           )}
 
           {error && (
@@ -290,7 +329,7 @@ export default function LabPage() {
                   <button
                     key={preset.id}
                     type="button"
-                    onClick={() => loadPreset(preset.spec)}
+                    onClick={() => loadPreset(preset)}
                     className="rounded-lg border border-line bg-white/[0.03] px-2.5 py-1.5 text-sm hover:border-ket/50"
                   >
                     {preset.label}
@@ -305,6 +344,66 @@ export default function LabPage() {
           )}
         </section>
 
+        {/* What the circuit is, in other forms — all generated from the circuit above. */}
+        <div className="grid gap-5 xl:grid-cols-2">
+          <section aria-labelledby="state-title" className="panel min-w-0 p-4 sm:p-5">
+            <h2 id="state-title" className="text-lg font-semibold">
+              {t({ en: "State before measurement", hi: "Measurement se pehle ka state" })}
+            </h2>
+            <p className="mt-1 text-sm text-mute">
+              {building
+                ? t({
+                    en: "The Bloch sphere updates as you place gates. Drag a sphere to turn it. Exact probabilities appear with the result — after you have predicted.",
+                    hi: "Gates place karte hi Bloch sphere update hota hai. Sphere ko drag karke ghumao. Exact probabilities result ke saath aati hain — predict karne ke baad.",
+                  })
+                : stage === "observe"
+                  ? t({
+                      en: "Where each qubit pointed just before it was measured, with the exact probabilities.",
+                      hi: "Measure hone se just pehle har qubit kahan point kar raha tha, exact probabilities ke saath.",
+                    })
+                  : t({
+                      en: "Hidden while you predict. It comes back with the result.",
+                      hi: "Predict karte waqt hidden. Result ke saath wapas aata hai.",
+                    })}
+            </p>
+            {building || stage === "observe" ? (
+              <div className={`mt-4 grid items-center gap-4 ${building ? "" : "sm:grid-cols-[auto_1fr]"}`}>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {snapshot.bloch.map((vector, q) => (
+                    <BlochSphere3D
+                      key={q}
+                      vector={vector}
+                      title={`q${q}`}
+                      size={circuit.qubits > 2 ? 132 : circuit.qubits > 1 ? 156 : 200}
+                      showAngles={state.settings.advancedMode}
+                    />
+                  ))}
+                </div>
+                {!building && (
+                  <div>
+                    <p className="mb-2 text-sm font-semibold">
+                      {t({ en: "Exact probabilities if every qubit were measured", hi: "Agar har qubit measure ho to exact probabilities" })}
+                    </p>
+                    <ProbabilityBars values={snapshot.probabilities} tone="phase" label="Exact probabilities of the final state" />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="well mt-4 flex items-center gap-2.5 px-4 py-6 text-mute">
+                <Lock size={17} aria-hidden />
+                {t({ en: "Predict first, then run.", hi: "Pehle predict karo, phir run karo." })}
+              </p>
+            )}
+          </section>
+
+          <section aria-labelledby="code-title" className="panel min-w-0 p-4 sm:p-5">
+            <h2 id="code-title" className="mb-3 text-lg font-semibold">
+              {t({ en: "Circuit, Qiskit and OpenQASM", hi: "Circuit, Qiskit aur OpenQASM" })}
+            </h2>
+            <CircuitCode circuit={circuit} shots={state.settings.shots} qiskitDiagram={qiskitDiagram} />
+          </section>
+        </div>
+
         {/* Predict → Run → Observe → Explain */}
         {!building && (
           <ExperimentFlow
@@ -314,6 +413,7 @@ export default function LabPage() {
             topic={topic}
             showCircuit={false}
             onStageChange={setStage}
+            onExecuted={(info) => setQiskitDiagram(info.backend === "qiskit" ? info.diagram : undefined)}
             after={() => (
               <div className="flex flex-wrap items-center gap-2">
                 <button type="button" onClick={editCircuit} className="btn btn-primary">
@@ -337,8 +437,9 @@ export default function LabPage() {
         )}
 
         <p className="text-sm text-dim">
-          Local Educational Quantum Simulator. Two qubits, six steps, 1,024 runs per experiment.
-          Nothing leaves your browser, and no real quantum hardware is used.
+          Educational quantum simulator: up to {QUBIT_OPTIONS[QUBIT_OPTIONS.length - 1]} qubits, {STEPS} steps,{" "}
+          {state.settings.shots.toLocaleString()} shots per run on the {BACKEND_LABEL[backend].toLowerCase()}. This is a
+          simulation — no real quantum hardware is used.
         </p>
       </div>
     </>

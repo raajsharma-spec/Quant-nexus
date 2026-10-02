@@ -19,7 +19,7 @@ import {
 
 export interface Toast {
   id: string;
-  kind: "achievement" | "unlock" | "info";
+  kind: "achievement" | "unlock" | "stage" | "info" | "warning";
   title: string;
   body: string;
 }
@@ -33,6 +33,7 @@ let state: AppState | null = null;
 let toasts: Toast[] = NO_TOASTS;
 const listeners = new Set<Listener>();
 let toastCounter = 0;
+let warnedAboutStorage = false;
 
 function current(): AppState {
   if (state === null) state = loadState(loadMode());
@@ -70,21 +71,44 @@ export const store = {
   /** Apply a change, award anything newly earned, save, and notify React. */
   update(change: (s: AppState) => AppState) {
     const before = current();
-    const after = finalize(change(before));
+    const changed = change(before);
+    if (changed === before) return; // nothing happened (for example, a locked stage)
+    const after = finalize(changed);
     state = after;
-    saveState(after);
+    const saved = saveState(after);
+    if (!saved && !warnedAboutStorage) {
+      warnedAboutStorage = true;
+      pushToast({
+        kind: "warning",
+        title: "Your progress could not be synchronized.",
+        body: "This browser is blocking storage. You can keep learning, but progress will be lost when the tab closes.",
+      });
+    }
 
-    // Celebrate things earned by this change.
+    // Tell the learner about what this change earned.
+    const known = new Set(before.events.map((e) => e.id));
+    const fresh = after.events.filter((e) => !known.has(e.id));
+
+    fresh
+      .filter((e) => e.type === "stageCompleted")
+      .slice(-1)
+      .forEach((e) =>
+        pushToast({
+          kind: "stage",
+          title: `Stage complete: ${e.detail} (${e.meta?.score ?? 100}%)`,
+          body: e.meta?.stage === "challenge" ? "Every stage of this concept is complete." : "Next stage unlocked.",
+        })
+      );
     for (const achievement of ACHIEVEMENTS) {
       if (!before.achievements[achievement.id] && after.achievements[achievement.id]) {
         pushToast({ kind: "achievement", title: "Achievement earned", body: achievement.title });
       }
     }
-    const unlocksBefore = before.events.filter((e) => e.type === "topicUnlocked").length;
-    const newUnlocks = after.events.filter((e) => e.type === "topicUnlocked").slice(unlocksBefore);
-    newUnlocks.forEach((e) =>
-      pushToast({ kind: "unlock", title: "Concept mastered", body: `Next concept unlocked: ${e.detail}` })
-    );
+    fresh
+      .filter((e) => e.type === "topicUnlocked")
+      .forEach((e) =>
+        pushToast({ kind: "unlock", title: "Concept mastered", body: `Next concept unlocked: ${e.detail}` })
+      );
 
     emit();
   },
@@ -110,6 +134,7 @@ export const store = {
     clearAll();
     state = createInitialState("live");
     toasts = NO_TOASTS;
+    warnedAboutStorage = false;
     emit();
   },
 

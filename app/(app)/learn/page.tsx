@@ -5,23 +5,23 @@ import { ArrowRight, Code2 } from "lucide-react";
 import { useApp } from "@/components/AppProvider";
 import { LearningRoadmap } from "@/components/LearningRoadmap";
 import { PageHeader, StatusBadge } from "@/components/ui";
+import { CURRICULUM } from "@/data/curriculum";
 import { PYTHON_TOPIC } from "@/data/topics";
 import { topicStatus } from "@/lib/mastery";
-
-const MODULE_STEPS = ["Concept", "Visual", "Try it", "Example", "Predict", "Practice", "Mastery check"];
+import { STAGES } from "@/lib/types";
 
 export default function LearnPage() {
   const { state, t } = useApp();
   const pythonStatus = topicStatus(state, "python");
-  const beginner = state.profile?.pythonLevel === "beginner";
+  const threshold = state.settings.masteryThreshold;
 
   return (
     <>
       <PageHeader
         title="Learn"
         lead={t({
-          en: "Start where you are. Each module ends with practice and a mastery check that unlocks the next one.",
-          hi: "Jahan ho wahin se start karo. Har module ke end mein practice aur mastery check hai jo next module unlock karta hai.",
+          en: `Each concept is a guided journey of 13 stages. A stage opens when the one before it reaches ${threshold}%, and mastering a concept unlocks the next.`,
+          hi: `Har concept 13 stages ki guided journey hai. Stage tab open hota hai jab usse pehle wala ${threshold}% par pahunche, aur concept master karne par next unlock hota hai.`,
         })}
       />
 
@@ -32,8 +32,9 @@ export default function LearnPage() {
           </h2>
           <LearningRoadmap showBlurb />
           <p className="mt-4 text-sm text-dim">
-            Modules 01 to 04 are fully interactive in this MVP. Modules 05 to 08 are planned for
-            the full release and stay locked.
+            {CURRICULUM.title} · curriculum v{CURRICULUM.version}. Modules 01 to 04 are fully interactive in this
+            build. Modules 05 to 08 are planned for the full release and stay locked. The curriculum is data: a
+            university can change it without touching the interface.
           </p>
         </section>
 
@@ -41,12 +42,12 @@ export default function LearnPage() {
           {/* Prerequisite */}
           <section
             aria-labelledby="python-title"
-            className={`panel p-5 ${beginner && pythonStatus !== "MASTERED" ? "border-ket/50" : ""}`}
+            className="panel p-5"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="flex items-center gap-2 text-sm font-semibold text-mute">
                 <Code2 size={17} aria-hidden />
-                Prerequisite
+                Optional warm-up
               </span>
               <StatusBadge status={pythonStatus} />
             </div>
@@ -55,17 +56,12 @@ export default function LearnPage() {
             </h2>
             <p className="mt-1 text-sm leading-relaxed text-mute">{t(PYTHON_TOPIC.blurb)}</p>
             <p className="mt-2 text-sm text-dim">
-              {beginner
-                ? t({
-                    en: "Recommended for you, because you said you are new to Python.",
-                    hi: "Aapke liye recommended, kyunki aapne bataya ki aap Python mein naye ho.",
-                  })
-                : t({
-                    en: "Optional. It never blocks the quantum modules.",
-                    hi: "Optional. Yeh quantum modules ko kabhi block nahi karta.",
-                  })}
+              {t({
+                en: "Optional. It never blocks the quantum concepts.",
+                hi: "Optional. Yeh quantum concepts ko kabhi block nahi karta.",
+              })}
             </p>
-            <Link href="/learn/python" className={`btn mt-4 text-sm ${beginner ? "btn-primary" : "btn-secondary"}`}>
+            <Link href="/learn/python" className="btn btn-secondary mt-4 text-sm">
               {pythonStatus === "AVAILABLE" ? "Start Python Foundations" : "Open Python Foundations"}
               <ArrowRight size={15} aria-hidden />
             </Link>
@@ -73,18 +69,23 @@ export default function LearnPage() {
 
           <section aria-labelledby="shape-title" className="panel p-5">
             <h2 id="shape-title" className="text-lg font-semibold">
-              How a module works
+              {t({ en: "How a concept works", hi: "Ek concept kaise chalta hai" })}
             </h2>
-            <ol className="mt-3 flex flex-col gap-2 text-sm">
-              {MODULE_STEPS.map((step, index) => (
-                <li key={step} className="flex items-center gap-3">
-                  <span className="ket flex h-6 w-6 items-center justify-center rounded-md border border-line text-xs text-mute">
-                    {index + 1}
-                  </span>
-                  {step}
+            <ol className="mt-3 flex flex-col gap-1.5 text-sm">
+              {STAGES.map((stage) => (
+                <li key={stage.id} className="flex items-baseline gap-3">
+                  <span className="ket w-6 shrink-0 text-xs text-dim">{stage.number}</span>
+                  <span className="font-medium">{stage.label}</span>
+                  <span className="text-mute">{t(stage.hint)}</span>
                 </li>
               ))}
             </ol>
+            <p className="mt-3 text-sm text-dim">
+              {t({
+                en: `Locked stages stay visible. Each one opens at ${threshold}% in the stage before it.`,
+                hi: `Locked stages visible rehte hain. Har ek pichhle stage mein ${threshold}% par open hota hai.`,
+              })}
+            </p>
           </section>
         </div>
       </div>

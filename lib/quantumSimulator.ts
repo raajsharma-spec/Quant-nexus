@@ -3,9 +3,15 @@
  * ----------------------------------------------------
  * A small state-vector simulator that runs entirely in the browser.
  * It is built for learning, not for research: it supports a handful of
- * qubits and the gates H, X, Y, Z, CX and measurement (M).
+ * qubits and these gates:
+ *   single qubit : H, X, Y, Z, S, T and the rotations RX, RY, RZ
+ *   two qubits   : CX (CNOT), CZ, SWAP
+ *   three qubits : CCX (Toffoli)
+ *   measurement  : M
  *
- * It does NOT talk to real quantum hardware or to any server.
+ * It does NOT talk to real quantum hardware. Running a circuit somewhere
+ * else (for example the optional Qiskit service) is handled one level up,
+ * in lib/execution.ts — this file is always the local fallback.
  *
  * How it works, in plain words:
  *  - A register of n qubits is described by 2^n complex numbers called
@@ -21,15 +27,47 @@ import type { L } from "./types";
 // Types
 // ---------------------------------------------------------------------------
 
-export type GateType = "H" | "X" | "Y" | "Z" | "CX" | "M";
+export type GateType =
+  | "H"
+  | "X"
+  | "Y"
+  | "Z"
+  | "S"
+  | "T"
+  | "RX"
+  | "RY"
+  | "RZ"
+  | "CX"
+  | "CZ"
+  | "SWAP"
+  | "CCX"
+  | "M";
+
+/** Every gate name the simulator understands — used to validate requests. */
+export const GATE_TYPES: GateType[] = [
+  "H", "X", "Y", "Z", "S", "T", "RX", "RY", "RZ", "CX", "CZ", "SWAP", "CCX", "M",
+];
+
+export const SINGLE_QUBIT_GATES: GateType[] = ["H", "X", "Y", "Z", "S", "T", "RX", "RY", "RZ"];
+export const ROTATION_GATES: GateType[] = ["RX", "RY", "RZ"];
+export const MULTI_QUBIT_GATES: GateType[] = ["CX", "CZ", "SWAP", "CCX"];
+
+/** Limits that keep the educational simulator fast in a browser. */
+export const MAX_QUBITS = 5;
+export const MAX_SHOTS = 8192;
+export const DEFAULT_SHOTS = 1024;
 
 export interface CircuitGate {
   id: string;
   type: GateType;
-  /** The wire this gate sits on. For CX this is the control qubit. */
+  /** The wire this gate sits on. For CX, CZ and CCX this is the (first) control qubit. */
   qubit: number;
-  /** Only for CX: the qubit that gets flipped. */
+  /** CX / CCX: the qubit that gets flipped. CZ / SWAP: the second qubit. */
   target?: number;
+  /** Only for CCX (Toffoli): the second control qubit. */
+  control2?: number;
+  /** Only for RX / RY / RZ: the rotation angle in radians. */
+  theta?: number;
   /** Column in the circuit (left to right, starting at 0). */
   step: number;
 }
@@ -80,7 +118,8 @@ export type SimulationErrorCode =
   | "EMPTY"
   | "NO_MEASUREMENT"
   | "GATE_AFTER_MEASUREMENT"
-  | "INVALID_CX";
+  | "INVALID_CX"
+  | "INVALID_REQUEST";
 
 export interface SimulationError {
   ok: false;
@@ -108,9 +147,9 @@ const abs2 = (a: Complex): number => a.re * a.re + a.im * a.im;
 
 const S = Math.SQRT1_2; // 1/√2 ≈ 0.7071
 
-type Matrix2 = [[Complex, Complex], [Complex, Complex]];
+export type Matrix2 = [[Complex, Complex], [Complex, Complex]];
 
-const MATRICES: Record<"H" | "X" | "Y" | "Z", Matrix2> = {
+const MATRICES: Record<"H" | "X" | "Y" | "Z" | "S" | "T", Matrix2> = {
   // Hadamard: turns |0⟩ into an equal mix of |0⟩ and |1⟩.
   H: [
     [c(S), c(S)],
@@ -131,7 +170,77 @@ const MATRICES: Record<"H" | "X" | "Y" | "Z", Matrix2> = {
     [c(1), c(0)],
     [c(0), c(-1)],
   ],
+  // S: a quarter-turn of phase. |1⟩ picks up a factor of i. Two S gates make a Z.
+  S: [
+    [c(1), c(0)],
+    [c(0), c(0, 1)],
+  ],
+  // T: an eighth-turn of phase. |1⟩ picks up e^(iπ/4). Two T gates make an S.
+  T: [
+    [c(1), c(0)],
+    [c(0), c(S, S)],
+  ],
 };
+
+/**
+ * Rotation gates turn the Bloch arrow by an angle θ around one axis.
+ *   RX(θ) = [[cos θ/2, −i·sin θ/2], [−i·sin θ/2, cos θ/2]]
+ *   RY(θ) = [[cos θ/2, −sin θ/2],   [sin θ/2,    cos θ/2]]
+ *   RZ(θ) = [[e^(−iθ/2), 0],        [0,          e^(iθ/2)]]
+ */
+function rotationMatrix(type: "RX" | "RY" | "RZ", theta: number): Matrix2 {
+  const cos = Math.cos(theta / 2);
+  const sin = Math.sin(theta / 2);
+  if (type === "RX") {
+    return [
+      [c(cos), c(0, -sin)],
+      [c(0, -sin), c(cos)],
+    ];
+  }
+  if (type === "RY") {
+    return [
+      [c(cos), c(-sin)],
+      [c(sin), c(cos)],
+    ];
+  }
+  return [
+    [c(cos, -sin), c(0)],
+    [c(0), c(cos, sin)],
+  ];
+}
+
+/** The 2×2 matrix of a single-qubit gate (also shown in the lab's advanced view). */
+export function gateMatrix(gate: Pick<CircuitGate, "type" | "theta">): Matrix2 | null {
+  switch (gate.type) {
+    case "H":
+    case "X":
+    case "Y":
+    case "Z":
+    case "S":
+    case "T":
+      return MATRICES[gate.type];
+    case "RX":
+    case "RY":
+    case "RZ":
+      return rotationMatrix(gate.type, gate.theta ?? Math.PI / 2);
+    default:
+      return null;
+  }
+}
+
+/** Every wire a gate touches, e.g. [control, target] for CX. */
+export function gateWires(gate: CircuitGate): number[] {
+  switch (gate.type) {
+    case "CX":
+    case "CZ":
+    case "SWAP":
+      return [gate.qubit, gate.target ?? -1];
+    case "CCX":
+      return [gate.qubit, gate.control2 ?? -1, gate.target ?? -1];
+    default:
+      return [gate.qubit];
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Bit bookkeeping
@@ -170,17 +279,44 @@ export function applyGate(
 
   if (gate.type === "M") return next;
 
-  if (gate.type === "CX") {
-    // Controlled-X: flip the target only in the parts of the state
-    // where the control qubit is 1. In practice that means swapping
-    // pairs of amplitudes.
-    const controlMask = maskFor(gate.qubit, totalQubits);
+  if (gate.type === "CX" || gate.type === "CCX") {
+    // Controlled-X: flip the target only in the parts of the state where
+    // every control qubit is 1. In practice that means swapping pairs of
+    // amplitudes. CCX (Toffoli) is the same idea with two controls.
+    let controlMask = maskFor(gate.qubit, totalQubits);
+    if (gate.type === "CCX") controlMask |= maskFor(gate.control2 ?? 0, totalQubits);
     const targetMask = maskFor(gate.target ?? 0, totalQubits);
     for (let i = 0; i < state.length; i++) {
-      const controlIsOne = (i & controlMask) !== 0;
+      const controlsAreOne = (i & controlMask) === controlMask;
       const targetIsZero = (i & targetMask) === 0;
-      if (controlIsOne && targetIsZero) {
+      if (controlsAreOne && targetIsZero) {
         const j = i | targetMask;
+        next[i] = state[j];
+        next[j] = state[i];
+      }
+    }
+    return next;
+  }
+
+  if (gate.type === "CZ") {
+    // Controlled-Z: put a minus sign on the part of the state where BOTH
+    // qubits are 1. Nothing is swapped, only a phase changes.
+    const both = maskFor(gate.qubit, totalQubits) | maskFor(gate.target ?? 0, totalQubits);
+    for (let i = 0; i < state.length; i++) {
+      if ((i & both) === both) next[i] = c(-state[i].re, -state[i].im);
+    }
+    return next;
+  }
+
+  if (gate.type === "SWAP") {
+    // SWAP: exchange the two qubits. Only the parts where they differ move.
+    const a = maskFor(gate.qubit, totalQubits);
+    const b = maskFor(gate.target ?? 0, totalQubits);
+    for (let i = 0; i < state.length; i++) {
+      const aIsOne = (i & a) !== 0;
+      const bIsOne = (i & b) !== 0;
+      if (aIsOne && !bIsOne) {
+        const j = (i & ~a) | b;
         next[i] = state[j];
         next[j] = state[i];
       }
@@ -190,7 +326,8 @@ export function applyGate(
 
   // Single-qubit gate. Amplitudes come in pairs that differ only in this
   // qubit's bit: (…0…) and (…1…). The 2×2 matrix mixes each pair.
-  const m = MATRICES[gate.type];
+  const m = gateMatrix(gate);
+  if (!m) return next;
   const mask = maskFor(gate.qubit, totalQubits);
   for (let i = 0; i < state.length; i++) {
     if ((i & mask) !== 0) continue; // visit each pair once, from its "0" member
@@ -306,8 +443,79 @@ export function orderedGates(circuit: Circuit): CircuitGate[] {
   return [...circuit.gates].sort((a, b) => a.step - b.step || a.qubit - b.qubit);
 }
 
+const invalid = (en: string, hi: string, fixEn: string, fixHi: string): SimulationError => ({
+  ok: false,
+  code: "INVALID_REQUEST",
+  message: { en, hi },
+  fix: { en: fixEn, hi: fixHi },
+});
+
+/**
+ * Input validation. A malformed circuit (unknown gate, wire that does not
+ * exist, too many qubits …) is turned into a clear message instead of a crash.
+ */
+export function validateStructure(circuit: Circuit, shots?: number): SimulationError | null {
+  if (!Number.isInteger(circuit.qubits) || circuit.qubits < 1 || circuit.qubits > MAX_QUBITS) {
+    return invalid(
+      `This simulator runs 1 to ${MAX_QUBITS} qubits.`,
+      `Yeh simulator 1 se ${MAX_QUBITS} qubits tak run karta hai.`,
+      "Reduce the number of qubits and try again.",
+      "Qubits kam karke dobara try karo."
+    );
+  }
+  if (shots !== undefined && (!Number.isInteger(shots) || shots < 1 || shots > MAX_SHOTS)) {
+    return invalid(
+      `Shots must be a whole number from 1 to ${MAX_SHOTS.toLocaleString()}.`,
+      `Shots 1 se ${MAX_SHOTS.toLocaleString()} ke beech ka whole number hona chahiye.`,
+      "Choose a shot count in that range.",
+      "Us range mein shot count choose karo."
+    );
+  }
+  if (!Array.isArray(circuit.gates) || circuit.gates.length > 200) {
+    return invalid(
+      "This circuit is too large for the educational simulator.",
+      "Yeh circuit educational simulator ke liye bahut bada hai.",
+      "Remove some gates and try again.",
+      "Kuch gates hatao aur dobara try karo."
+    );
+  }
+  for (const gate of circuit.gates) {
+    if (!GATE_TYPES.includes(gate.type)) {
+      return invalid(
+        `"${String(gate.type)}" is not a gate this simulator knows.`,
+        `"${String(gate.type)}" is simulator ka known gate nahi hai.`,
+        `Use one of: ${GATE_TYPES.join(", ")}.`,
+        `Inme se ek use karo: ${GATE_TYPES.join(", ")}.`
+      );
+    }
+    const wires = gateWires(gate);
+    const outOfRange = wires.some((w) => !Number.isInteger(w) || w < 0 || w >= circuit.qubits);
+    if (outOfRange || !Number.isInteger(gate.step) || gate.step < 0) {
+      if (MULTI_QUBIT_GATES.includes(gate.type)) continue; // reported below with a friendlier message
+      return invalid(
+        `A ${gate.type} gate points at a qubit that does not exist.`,
+        `Ek ${gate.type} gate aise qubit par laga hai jo exist nahi karta.`,
+        `Use qubits q0 to q${circuit.qubits - 1}.`,
+        `q0 se q${circuit.qubits - 1} tak ke qubits use karo.`
+      );
+    }
+    if (ROTATION_GATES.includes(gate.type) && gate.theta !== undefined && !Number.isFinite(gate.theta)) {
+      return invalid(
+        `The angle of a ${gate.type} gate is not a number.`,
+        `${gate.type} gate ka angle number nahi hai.`,
+        "Pick the angle again.",
+        "Angle dobara choose karo."
+      );
+    }
+  }
+  return null;
+}
+
 /** Check that the circuit is something this simulator can run. */
-export function validateCircuit(circuit: Circuit): SimulationError | null {
+export function validateCircuit(circuit: Circuit, shots?: number): SimulationError | null {
+  const structural = validateStructure(circuit, shots);
+  if (structural) return structural;
+
   if (circuit.gates.length === 0) {
     return {
       ok: false,
@@ -323,25 +531,25 @@ export function validateCircuit(circuit: Circuit): SimulationError | null {
     };
   }
 
+  // Multi-qubit gates need distinct wires that all exist.
   for (const gate of circuit.gates) {
-    if (gate.type !== "CX") continue;
-    const target = gate.target;
-    if (
-      target === undefined ||
-      target === gate.qubit ||
-      target < 0 ||
-      target >= circuit.qubits
-    ) {
+    if (!MULTI_QUBIT_GATES.includes(gate.type)) continue;
+    const wires = gateWires(gate);
+    const distinct = new Set(wires).size === wires.length;
+    const inRange = wires.every((w) => Number.isInteger(w) && w >= 0 && w < circuit.qubits);
+    if (!distinct || !inRange) {
+      const needs = gate.type === "CCX" ? "three" : "two";
+      const needsHi = gate.type === "CCX" ? "teen" : "do";
       return {
         ok: false,
         code: "INVALID_CX",
         message: {
-          en: "A CX gate needs two different qubits: a control and a target.",
-          hi: "CX gate ko do alag qubits chahiye: ek control aur ek target.",
+          en: `A ${gate.type} gate needs ${needs} different qubits.`,
+          hi: `${gate.type} gate ko ${needsHi} alag qubits chahiye.`,
         },
         fix: {
-          en: "Remove the CX and place it again on a free column.",
-          hi: "CX hatao aur use kisi free column mein dobara place karo.",
+          en: `Remove the ${gate.type} and place it again on a free column.`,
+          hi: `${gate.type} hatao aur use kisi free column mein dobara place karo.`,
         },
       };
     }
@@ -356,8 +564,7 @@ export function validateCircuit(circuit: Circuit): SimulationError | null {
     }
   }
   for (const gate of circuit.gates) {
-    const wires = gate.type === "CX" ? [gate.qubit, gate.target as number] : [gate.qubit];
-    for (const wire of wires) {
+    for (const wire of gateWires(gate)) {
       const m = measuredAt.get(wire);
       if (m !== undefined && gate.step > m) {
         return {
@@ -409,11 +616,11 @@ export function simulateCircuit(
   circuit: Circuit,
   options: { shots?: number; random?: () => number } = {}
 ): SimulationResult {
-  const problem = validateCircuit(circuit);
+  const shots = options.shots ?? DEFAULT_SHOTS;
+  const problem = validateCircuit(circuit, shots);
   if (problem) return problem;
 
   const n = circuit.qubits;
-  const shots = options.shots ?? 1024;
   const allQubits = Array.from({ length: n }, (_, q) => q);
   const snapshot = (s: Complex[]) => allQubits.map((q) => blochVector(s, q, n));
 
@@ -444,33 +651,109 @@ export function simulateCircuit(
   };
 }
 
+/**
+ * The state of a register after some gates, WITHOUT measuring.
+ * Used by the experiment sandbox, the visual lessons and the Bloch sphere,
+ * where the learner looks at a state before any measurement happens.
+ */
+export interface StateSnapshot {
+  stateVector: Complex[];
+  /** One Bloch vector per qubit. */
+  bloch: BlochVector[];
+  /** Exact probability of every result if all qubits were measured now. */
+  probabilities: Record<string, number>;
+}
+
+export function stateAfter(qubits: number, gates: CircuitGate[]): StateSnapshot {
+  const n = Math.max(1, Math.min(MAX_QUBITS, qubits));
+  const allQubits = Array.from({ length: n }, (_, q) => q);
+  let state = initialState(n);
+  const usable = gates.filter(
+    (g) => g.type !== "M" && gateWires(g).every((w) => Number.isInteger(w) && w >= 0 && w < n)
+  );
+  for (const gate of [...usable].sort((a, b) => a.step - b.step || a.qubit - b.qubit)) {
+    state = applyGate(state, gate, n);
+  }
+  return {
+    stateVector: state,
+    bloch: allQubits.map((q) => blochVector(state, q, n)),
+    probabilities: calculateProbabilities(state, allQubits, n),
+  };
+}
+
+/** Basis labels in the order of the state vector: "0","1" or "00","01","10","11" … */
+export function basisLabels(qubits: number): string[] {
+  return Array.from({ length: 1 << qubits }, (_, k) => k.toString(2).padStart(qubits, "0"));
+}
+
 // ---------------------------------------------------------------------------
 // Small helpers used by the UI
 // ---------------------------------------------------------------------------
 
 let gateCounter = 0;
-/** Create a gate with a unique id. */
+/** Create a gate with a unique id. `extra` is the second control (CCX) or the angle (RX/RY/RZ). */
 export function makeGate(
   type: GateType,
   qubit: number,
   step: number,
-  target?: number
+  target?: number,
+  extra?: number
 ): CircuitGate {
   gateCounter += 1;
-  return { id: `g${Date.now().toString(36)}${gateCounter}`, type, qubit, step, target };
+  const gate: CircuitGate = { id: `g${Date.now().toString(36)}${gateCounter}`, type, qubit, step };
+  if (target !== undefined) gate.target = target;
+  if (type === "CCX" && extra !== undefined) gate.control2 = extra;
+  if (ROTATION_GATES.includes(type)) gate.theta = extra ?? Math.PI / 2;
+  return gate;
 }
 
+/** A circuit written as [gate, qubit, step, target?, extra?] rows. */
+export type GateSpec = [GateType, number, number, number?, number?];
+
 /** Build a circuit from a short description — handy for lessons and challenges. */
-export function buildCircuit(
-  qubits: number,
-  spec: Array<[GateType, number, number, number?]>,
-  steps = 6
-): Circuit {
+export function buildCircuit(qubits: number, spec: GateSpec[], steps = 6): Circuit {
   return {
     qubits,
     steps,
-    gates: spec.map(([type, qubit, step, target]) => makeGate(type, qubit, step, target)),
+    gates: spec.map(([type, qubit, step, target, extra]) => makeGate(type, qubit, step, target, extra)),
   };
+}
+
+/** "π/2", "π/4", "π" or a decimal — for showing rotation angles. */
+export function angleLabel(theta: number): string {
+  const ratio = theta / Math.PI;
+  const known: Array<[number, string]> = [
+    [1, "π"],
+    [0.5, "π/2"],
+    [0.25, "π/4"],
+    [1 / 3, "π/3"],
+    [2, "2π"],
+  ];
+  for (const [value, label] of known) {
+    if (Math.abs(ratio - value) < 1e-9) return label;
+    if (Math.abs(ratio + value) < 1e-9) return `−${label}`;
+  }
+  return theta.toFixed(2);
+}
+
+/** How a gate is written on one of its wires, e.g. "CX(control)" or "RX(π/2)". */
+export function gateLabelOnWire(gate: CircuitGate, wire: number): string {
+  switch (gate.type) {
+    case "CX":
+      return gate.qubit === wire ? "CX(control)" : "CX(target)";
+    case "CZ":
+      return "CZ";
+    case "SWAP":
+      return "SWAP";
+    case "CCX":
+      return gate.target === wire ? "CCX(target)" : "CCX(control)";
+    case "RX":
+    case "RY":
+    case "RZ":
+      return `${gate.type}(${angleLabel(gate.theta ?? Math.PI / 2)})`;
+    default:
+      return gate.type;
+  }
 }
 
 /** A one-line text version of a circuit, e.g. "q0: H → M | q1: M". Stored with predictions. */
@@ -478,11 +761,8 @@ export function describeCircuit(circuit: Circuit): string {
   const lines: string[] = [];
   for (let q = 0; q < circuit.qubits; q++) {
     const parts = orderedGates(circuit)
-      .filter((g) => g.qubit === q || (g.type === "CX" && g.target === q))
-      .map((g) => {
-        if (g.type !== "CX") return g.type;
-        return g.qubit === q ? "CX(control)" : "CX(target)";
-      });
+      .filter((g) => gateWires(g).includes(q))
+      .map((g) => gateLabelOnWire(g, q));
     if (parts.length > 0) lines.push(`q${q}: ${parts.join(" → ")}`);
   }
   return lines.join(" | ") || "empty circuit";
@@ -490,7 +770,10 @@ export function describeCircuit(circuit: Circuit): string {
 
 /** A signature that changes whenever the circuit changes. */
 export function circuitSignature(circuit: Circuit): string {
-  return orderedGates(circuit)
-    .map((g) => `${g.type}${g.qubit}${g.target ?? ""}@${g.step}`)
-    .join(",");
+  return (
+    `${circuit.qubits}q:` +
+    orderedGates(circuit)
+      .map((g) => `${g.type}${g.qubit}${g.target ?? ""}${g.control2 ?? ""}${g.theta ?? ""}@${g.step}`)
+      .join(",")
+  );
 }

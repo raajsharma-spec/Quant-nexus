@@ -1,6 +1,13 @@
 "use client";
 
-import type { Circuit, CircuitGate, GateType } from "@/lib/quantumSimulator";
+import {
+  angleLabel,
+  gateLabelOnWire,
+  gateWires,
+  type Circuit,
+  type CircuitGate,
+  type GateType,
+} from "@/lib/quantumSimulator";
 import { GATE_INFO } from "./GateButton";
 
 interface Props {
@@ -15,13 +22,22 @@ interface Props {
   trim?: boolean;
 }
 
-/** Find the gate drawn at a spot. A CX occupies both its control and target spots. */
+/** Find the gate drawn at a spot. A multi-qubit gate occupies every wire it touches. */
 function gateAt(circuit: Circuit, qubit: number, step: number): CircuitGate | null {
-  return (
-    circuit.gates.find(
-      (g) => g.step === step && (g.qubit === qubit || (g.type === "CX" && g.target === qubit))
-    ) ?? null
-  );
+  return circuit.gates.find((g) => g.step === step && gateWires(g).includes(qubit)) ?? null;
+}
+
+/** The multi-qubit gate (if any) whose vertical link passes through this spot. */
+function linkAt(circuit: Circuit, qubit: number, step: number): { top: number; bottom: number } | null {
+  for (const gate of circuit.gates) {
+    if (gate.step !== step) continue;
+    const wires = gateWires(gate);
+    if (wires.length < 2) continue;
+    const top = Math.min(...wires);
+    const bottom = Math.max(...wires);
+    if (qubit >= top && qubit <= bottom) return { top, bottom };
+  }
+  return null;
 }
 
 /** Draws a circuit as wires and gate boxes. Used read-only in lessons and editable in the lab. */
@@ -49,11 +65,11 @@ export function QuantumCircuit({ circuit, onCellClick, placing, running, trim }:
 
             {columns.map((step) => {
               const gate = gateAt(circuit, q, step);
-              // A CX in this column draws a vertical link through the rows it spans.
-              const link = circuit.gates.find((g) => g.step === step && g.type === "CX");
-              const top = link ? Math.min(link.qubit, link.target as number) : -1;
-              const bottom = link ? Math.max(link.qubit, link.target as number) : -1;
-              const spans = link && q >= top && q <= bottom;
+              // A multi-qubit gate in this column draws a vertical link through the rows it spans.
+              const link = linkAt(circuit, q, step);
+              const top = link ? link.top : -1;
+              const bottom = link ? link.bottom : -1;
+              const spans = !!link;
 
               const content = (
                 <>
@@ -87,7 +103,7 @@ export function QuantumCircuit({ circuit, onCellClick, placing, running, trim }:
               }
 
               const label = gate
-                ? `q${q}, step ${step + 1}: ${gate.type} gate. Click to remove.`
+                ? `q${q}, step ${step + 1}: ${gateLabelOnWire(gate, q)} gate. Click to remove.`
                 : `q${q}, step ${step + 1}: empty.${placing && placing !== "erase" ? ` Click to place ${placing}.` : ""}`;
               return (
                 <button
@@ -129,28 +145,43 @@ function EmptySpot() {
 }
 
 function GateMark({ gate, qubit }: { gate: CircuitGate; qubit: number }) {
-  if (gate.type === "CX") {
-    const isControl = gate.qubit === qubit;
-    return isControl ? (
+  const controlDot = (
+    <span aria-hidden className="relative h-3.5 w-3.5 rounded-full bg-signal ring-4 ring-deck" />
+  );
+  const targetPlus = (
+    <span
+      aria-hidden
+      className="ket relative flex h-8 w-8 items-center justify-center rounded-full border-2 border-signal bg-deck text-lg leading-none text-signal"
+    >
+      +
+    </span>
+  );
+
+  if (gate.type === "CX") return gate.qubit === qubit ? controlDot : targetPlus;
+  if (gate.type === "CCX") return gate.target === qubit ? targetPlus : controlDot;
+  // CZ is symmetric: a dot on both wires.
+  if (gate.type === "CZ") return controlDot;
+  if (gate.type === "SWAP") {
+    return (
       <span
         aria-hidden
-        className="relative h-3.5 w-3.5 rounded-full bg-signal ring-4 ring-deck"
-      />
-    ) : (
-      <span
-        aria-hidden
-        className="ket relative flex h-8 w-8 items-center justify-center rounded-full border-2 border-signal bg-deck text-lg leading-none text-signal"
+        className="ket relative flex h-8 w-8 items-center justify-center rounded-lg bg-deck text-xl leading-none text-signal"
       >
-        +
+        ×
       </span>
     );
   }
+
+  const rotation = gate.type === "RX" || gate.type === "RY" || gate.type === "RZ";
   return (
     <span
       aria-hidden
-      className={`ket relative flex h-10 w-10 items-center justify-center rounded-lg border bg-deck text-sm font-semibold ${GATE_INFO[gate.type].className}`}
+      className={`ket relative flex h-10 flex-col items-center justify-center rounded-lg border bg-deck font-semibold ${
+        rotation ? "min-w-11 px-1 text-[0.7rem] leading-tight" : "w-10 text-sm"
+      } ${GATE_INFO[gate.type].className}`}
     >
       {gate.type}
+      {rotation && <span className="text-[0.6rem] font-normal opacity-80">{angleLabel(gate.theta ?? Math.PI / 2)}</span>}
     </span>
   );
 }
@@ -159,9 +190,9 @@ function describe(circuit: Circuit): string {
   const parts: string[] = [];
   for (let q = 0; q < circuit.qubits; q++) {
     const gates = [...circuit.gates]
-      .filter((g) => g.qubit === q || (g.type === "CX" && g.target === q))
+      .filter((g) => gateWires(g).includes(q))
       .sort((a, b) => a.step - b.step)
-      .map((g) => (g.type === "CX" ? (g.qubit === q ? "CX control" : "CX target") : g.type));
+      .map((g) => gateLabelOnWire(g, q).replace("(", " ").replace(")", ""));
     parts.push(`q${q}: ${gates.length ? gates.join(", then ") : "no gates"}`);
   }
   return parts.join(". ");

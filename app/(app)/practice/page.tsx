@@ -6,29 +6,42 @@ import { useSearchParams } from "next/navigation";
 import { ArrowRight, Check, Lightbulb, Lock, RotateCcw } from "lucide-react";
 import { useApp } from "@/components/AppProvider";
 import { ExperimentFlow } from "@/components/ExperimentFlow";
+import { QuickReview } from "@/components/QuickReview";
 import { PageHeader } from "@/components/ui";
-import { CHALLENGES, challengesFor, type Challenge } from "@/data/challenges";
+import { CHALLENGES, challengesFor, findChallenge, type Challenge } from "@/data/challenges";
 import { INTERACTIVE_TOPICS, topicTitle } from "@/data/topics";
-import { currentTopic, topicStatus } from "@/lib/mastery";
+import { canOpenStage, currentTopic } from "@/lib/mastery";
 import { buildCircuit } from "@/lib/quantumSimulator";
+import { dueReviews } from "@/lib/review";
 import type { TopicId } from "@/lib/types";
+
+const DIFFICULTY: Record<Challenge["difficulty"], string> = { 1: "Warm-up", 2: "Standard", 3: "Stretch" };
 
 function Practice() {
   const { state, insights, t, actions } = useApp();
   const params = useSearchParams();
   const requested = params.get("topic") as TopicId | null;
+  const requestedChallenge = params.get("challenge");
+  const requestedReview = params.get("review") as TopicId | null;
+  const threshold = state.settings.masteryThreshold;
 
-  const isOpen = (topic: TopicId) => topicStatus(state, topic) !== "LOCKED";
+  // A concept's challenges open once the learner has reached its Predict stage
+  // (they use the same predict → run → observe rhythm), and stay open after mastery.
+  const isOpen = (topic: TopicId) => !!state.concepts[topic]?.masteredAt || canOpenStage(state, topic, "predict");
 
-  // Start on the first unsolved challenge of the requested (or current) topic.
+  // Start on the requested challenge, or the first unsolved one of the requested (or current) topic.
   const [selectedId, setSelectedId] = useState<string>(() => {
-    const topic =
-      requested && INTERACTIVE_TOPICS.includes(requested) && isOpen(requested)
-        ? requested
-        : currentTopic(state);
+    const asked = requestedChallenge ? findChallenge(requestedChallenge) : undefined;
+    if (asked && isOpen(asked.topic)) return asked.id;
+    const wanted =
+      requested && INTERACTIVE_TOPICS.includes(requested) && isOpen(requested) ? requested : currentTopic(state);
+    const topic = isOpen(wanted) ? wanted : (INTERACTIVE_TOPICS.find(isOpen) ?? wanted);
     const list = challengesFor(topic);
     return (list.find((c) => !state.practice[c.id]?.solved) ?? list[0] ?? CHALLENGES[0]).id;
   });
+  const [reviewOpen, setReviewOpen] = useState(
+    () => (!!requestedReview && !!state.concepts[requestedReview]?.masteredAt) || dueReviews(state).length > 0
+  );
   /** Bumped by "Try again" so the same challenge restarts cleanly. */
   const [attempt, setAttempt] = useState(0);
   const [hintShown, setHintShown] = useState(false);
@@ -48,6 +61,7 @@ function Practice() {
   const openChallenges = CHALLENGES.filter((c) => isOpen(c.topic));
   const nextUp = openChallenges.find((c) => c.id !== challenge.id && !state.practice[c.id]?.solved);
   const record = state.practice[challenge.id];
+  const challengeOpen = isOpen(challenge.topic);
 
   const showHint = () => {
     setHintShown(true);
@@ -79,6 +93,12 @@ function Practice() {
         </dl>
       </PageHeader>
 
+      {reviewOpen && (
+        <div className="mb-5">
+          <QuickReview topic={requestedReview ?? undefined} onDone={() => setReviewOpen(false)} />
+        </div>
+      )}
+
       <div className="grid gap-5 lg:grid-cols-[19rem_1fr]">
         {/* Challenge list */}
         <nav aria-label="Challenges" className="flex flex-col gap-4 lg:sticky lg:top-24 lg:self-start">
@@ -106,7 +126,7 @@ function Practice() {
                 </ul>
                 {!open && (
                   <p className="mt-1.5 px-1 text-xs text-dim">
-                    Unlocks when you master the topic before it.
+                    Opens when you reach the Predict stage of {topicTitle(topic)}.
                   </p>
                 )}
               </div>
@@ -118,9 +138,7 @@ function Practice() {
         <section aria-labelledby="challenge-title" className="panel min-w-0 p-5 sm:p-6">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="tag text-mute">{topicTitle(challenge.topic)}</span>
-            <span className={`tag ${challenge.required ? "border-signal/40 text-signal" : "text-dim"}`}>
-              {challenge.required ? "Required to unlock" : "Bonus"}
-            </span>
+            <span className="tag border-signal/40 text-signal">{DIFFICULTY[challenge.difficulty]}</span>
             {record?.solved && (
               <span className="tag border-ok/40 bg-ok/10 text-ok">
                 <Check size={12} aria-hidden />
@@ -132,6 +150,27 @@ function Practice() {
             {t(challenge.title)}
           </h2>
 
+          {!challengeOpen ? (
+            <div className="mt-4 flex items-start gap-3 rounded-xl border border-line bg-void/50 p-4">
+              <Lock size={18} className="mt-0.5 shrink-0 text-mute" aria-hidden />
+              <div>
+                <p className="font-semibold">
+                  {t({ en: "This challenge is locked for now.", hi: "Yeh challenge abhi locked hai." })}
+                </p>
+                <p className="mt-1 text-sm text-mute">
+                  {t({
+                    en: `Reach the Predict stage of ${topicTitle(challenge.topic)} first: complete its earlier stages with at least ${threshold}% each.`,
+                    hi: `Pehle ${topicTitle(challenge.topic)} ke Predict stage tak pahuncho: uske pehle ke stages kam se kam ${threshold}% ke saath complete karo.`,
+                  })}
+                </p>
+                <Link href={`/learn/${currentTopic(state)}`} className="btn btn-primary mt-3 text-sm">
+                  {t({ en: "Continue learning", hi: "Learning continue karo" })}
+                  <ArrowRight size={15} aria-hidden />
+                </Link>
+              </div>
+            </div>
+          ) : (
+          <>
           <div className="mt-4">
             <ExperimentFlow
               key={`${challenge.id}-${attempt}`}
@@ -171,8 +210,8 @@ function Practice() {
                         <ArrowRight size={15} aria-hidden />
                       </button>
                     ) : (
-                      <Link href={`/assessment?topic=${challenge.topic}`} className="btn btn-primary text-sm">
-                        {t({ en: "Take the mastery check", hi: "Mastery check lo" })}
+                      <Link href={`/learn/${currentTopic(state)}`} className="btn btn-primary text-sm">
+                        {t({ en: "Back to your concept", hi: "Apne concept par wapas" })}
                         <ArrowRight size={15} aria-hidden />
                       </Link>
                     )}
@@ -202,6 +241,8 @@ function Practice() {
               </button>
             )}
           </div>
+          </>
+          )}
         </section>
       </div>
     </>
@@ -246,7 +287,7 @@ function ChallengeRow({
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{title}</span>
           <span className="block text-xs text-dim">
-            {challenge.required ? "Required" : "Bonus"}
+            {DIFFICULTY[challenge.difficulty]}
             {attempts > 0 && ` · ${attempts} attempt${attempts === 1 ? "" : "s"}`}
           </span>
         </span>

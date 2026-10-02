@@ -8,7 +8,9 @@ import { RecommendationCard } from "@/components/RecommendationCard";
 import { DemoBadge, EmptyState, Meter, PageHeader, Ring } from "@/components/ui";
 import { challengesFor } from "@/data/challenges";
 import { INTERACTIVE_TOPICS, topicTitle } from "@/data/topics";
+import { LEVEL_LABEL } from "@/lib/learnerLevel";
 import { roadmapProgress, topicStatus } from "@/lib/mastery";
+import { activeMisconceptions, resolvedMisconceptions } from "@/lib/misconceptions";
 import { RULES } from "@/lib/recommendationEngine";
 
 export default function ProgressPage() {
@@ -16,15 +18,25 @@ export default function ProgressPage() {
   const demo = state.mode === "demo";
   const mastered = INTERACTIVE_TOPICS.filter((topic) => topicStatus(state, topic) === "MASTERED").length;
 
+  const pct = (value: number | null) => (value === null ? "—" : `${value}%`);
+  const open = activeMisconceptions(state);
+  const resolved = resolvedMisconceptions(state);
+  const level = insights.learner;
+  const explanations = state.explanations.slice(-5).reverse();
+
   const profile = [
+    { label: "Overall Progress", value: `${insights.overallProgress}%` },
+    { label: "Stages Completed", value: `${insights.stagesCompleted} / ${insights.stagesTotal}` },
     { label: "Concept Mastery", value: `${insights.conceptMastery}%` },
-    { label: "Prediction Accuracy", value: insights.prediction.accuracy === null ? "—" : `${insights.prediction.accuracy}%` },
-    { label: "Practice Accuracy", value: insights.practice.accuracy === null ? "—" : `${insights.practice.accuracy}%` },
-    { label: "Attempts", value: String(insights.attempts) },
-    { label: "Hints Requested", value: String(insights.hintsRequested) },
-    { label: "Topics Revisited", value: String(insights.topicsRevisited) },
-    { label: "Lessons Completed", value: String(insights.lessonsCompleted) },
+    { label: "Prediction Accuracy", value: pct(insights.prediction.accuracy) },
+    { label: "Explanation Mastery", value: pct(insights.explanationMastery) },
+    { label: "Mastery Check, First Try", value: pct(insights.assessmentFirstTry) },
+    { label: "Practice Accuracy", value: pct(insights.practice.accuracy) },
     { label: "Circuits Run", value: String(insights.circuitsRun) },
+    { label: "Tutor Questions", value: String(insights.tutorQuestions) },
+    { label: "Hints Requested", value: String(insights.hintsRequested) },
+    { label: "Misconceptions Resolved", value: `${insights.misconceptionsResolved} / ${insights.misconceptionsResolved + insights.misconceptionsOpen}` },
+    { label: "Time in Stages", value: `${insights.minutesSpent} min` },
   ];
 
   return (
@@ -46,22 +58,30 @@ export default function ProgressPage() {
             Learning progress
           </h2>
           <div className="mt-4 flex flex-wrap items-center gap-6">
-            <Ring value={insights.conceptMastery} label="Concept mastery" caption="mastery" size={124} />
+            <Ring value={insights.overallProgress} label="Overall progress" caption="overall" size={124} />
             <div className="min-w-[14rem] flex-1">
               <div className="mb-1.5 flex items-center justify-between text-sm">
                 <span className="text-mute">Roadmap</span>
                 <span className="font-semibold">
-                  {mastered} of {INTERACTIVE_TOPICS.length} MVP modules mastered
+                  {mastered} of {INTERACTIVE_TOPICS.length} concepts mastered
                 </span>
               </div>
               <Meter value={roadmapProgress(state)} label="Roadmap progress" tone="ok" />
               <p className="mt-3 text-sm text-mute">
-                Level {insights.level} · {insights.xp} XP · {insights.streak} day
+                XP level {insights.level} · {insights.xp} XP · {insights.streak} day
                 {insights.streak === 1 ? "" : "s"} streak
               </p>
+              <p className="mt-2 text-sm">
+                <span className="text-mute">Learner level (inferred, never asked): </span>
+                <span className="font-semibold">{LEVEL_LABEL[level.level]}</span>
+                {level.provisional && <span className="text-mute"> · provisional</span>}
+              </p>
+              {level.evidence.length > 0 && (
+                <p className="mt-0.5 text-xs leading-relaxed text-dim">Based on: {level.evidence.join(" · ")}</p>
+              )}
             </div>
           </div>
-          <dl className="mt-5 grid grid-cols-2 gap-2 border-t border-line pt-5 sm:grid-cols-4">
+          <dl className="mt-5 grid grid-cols-2 gap-2 border-t border-line pt-5 sm:grid-cols-3 lg:grid-cols-4">
             {profile.map((item) => (
               <div key={item.label} className="well px-3 py-2.5">
                 <dd className="text-xl font-semibold tabular-nums">{item.value}</dd>
@@ -100,7 +120,7 @@ export default function ProgressPage() {
         <section aria-labelledby="mastery-title" className="panel p-5 sm:p-6 xl:col-span-12">
           <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
             <h2 id="mastery-title" className="text-lg font-semibold">
-              Topic mastery
+              Concept mastery
             </h2>
             <p className="text-sm text-mute">Mastery threshold: {state.settings.masteryThreshold}%</p>
           </div>
@@ -238,7 +258,7 @@ export default function ProgressPage() {
                     </p>
                   </div>
                   <Link
-                    href={weak.reason === "mastery-check" ? `/learn/${weak.topic}` : `/practice?topic=${weak.topic}`}
+                    href={weak.reason === "mastery-check" ? `/learn/${weak.topic}?stage=assess` : `/practice?topic=${weak.topic}`}
                     className="btn btn-secondary text-sm"
                   >
                     {weak.reason === "mastery-check" ? "Review" : "Practice"}
@@ -249,8 +269,75 @@ export default function ProgressPage() {
           )}
         </section>
 
+        {/* Misconceptions */}
+        <section aria-labelledby="misconception-title" className="panel p-5 sm:p-6 xl:col-span-6">
+          <h2 id="misconception-title" className="text-lg font-semibold">
+            Possible misconceptions
+          </h2>
+          <p className="mt-1 text-sm text-mute">
+            Detected by rules from your predictions, explanations, tutor questions and mastery-check answers. Each
+            one is a possibility with a confidence, not a verdict.
+          </p>
+          {open.length === 0 && resolved.length === 0 ? (
+            <p className="mt-3 text-mute">None detected so far.</p>
+          ) : (
+            <ul className="mt-3 flex flex-col gap-2">
+              {open.map((item) => (
+                <li key={item.info.id} className="rounded-xl border border-warn/35 bg-warn/[0.06] px-4 py-3">
+                  <p className="flex flex-wrap items-center gap-2 font-semibold">
+                    {t(item.info.title)}
+                    <span className="tag text-warn">open · {Math.round(item.confidence * 100)}%</span>
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed text-ink/90">{t(item.info.correction)}</p>
+                  <p className="mt-1 text-xs text-dim">
+                    Seen {item.count} time{item.count === 1 ? "" : "s"} · from {item.sources.join(", ")} · “{item.lastEvidence}”
+                  </p>
+                  <Link href={`/practice?challenge=${item.info.challengeId}`} className="btn btn-secondary mt-2 px-3 py-1.5 text-sm">
+                    Test it with a circuit
+                  </Link>
+                </li>
+              ))}
+              {resolved.map((item) => (
+                <li key={item.info.id} className="well px-4 py-3">
+                  <p className="flex flex-wrap items-center gap-2 font-medium">
+                    {t(item.info.title)}
+                    <span className="tag border-ok/40 text-ok">resolved</span>
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* Explanations */}
+        <section aria-labelledby="explanation-title" className="panel p-5 sm:p-6 xl:col-span-6">
+          <h2 id="explanation-title" className="text-lg font-semibold">
+            Your explanations
+          </h2>
+          {explanations.length === 0 ? (
+            <p className="mt-2 text-mute">None yet. You write the first one in the Explain stage of a concept.</p>
+          ) : (
+            <ul className="mt-3 flex flex-col gap-2">
+              {explanations.map((item) => (
+                <li key={item.id} className="well px-4 py-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                    <span className="font-medium">
+                      {topicTitle(item.topic)} · {item.mode === "written" ? "written" : "built from sentences"}
+                    </span>
+                    <span className={`font-semibold tabular-nums ${item.score >= state.settings.masteryThreshold ? "text-ok" : "text-warn"}`}>
+                      {item.score}%
+                    </span>
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-mute">“{item.text}”</p>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-3 text-xs text-dim">Your words are stored only on this device.</p>
+        </section>
+
         {/* Recent activity */}
-        <section aria-labelledby="activity-title" className="panel p-5 sm:p-6 xl:col-span-6">
+        <section aria-labelledby="activity-title" className="panel p-5 sm:p-6 xl:col-span-12">
           <h2 id="activity-title" className="mb-4 text-lg font-semibold">
             Recent activity
           </h2>
