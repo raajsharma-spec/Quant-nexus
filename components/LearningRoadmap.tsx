@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { ROADMAP } from "@/data/topics";
 import { currentTopic, topicMastery, topicStatus } from "@/lib/mastery";
+import { stageMeta } from "@/lib/types";
 import { useApp } from "./AppProvider";
 import { Meter, StatusBadge } from "./ui";
 
-/** The eight-module roadmap. The first four are interactive in this MVP. */
+/** The eight-module roadmap. The first four are interactive in this build. */
 export function LearningRoadmap({ showBlurb = false }: { showBlurb?: boolean }) {
   const { state, t } = useApp();
   const current = currentTopic(state);
@@ -15,7 +16,8 @@ export function LearningRoadmap({ showBlurb = false }: { showBlurb?: boolean }) 
     <ol className="flex flex-col">
       {ROADMAP.map((topic, index) => {
         const status = topicStatus(state, topic.id);
-        const mastery = topic.interactive ? topicMastery(state, topic.id).mastery : 0;
+        const m = topic.interactive ? topicMastery(state, topic.id) : null;
+        const mastery = m?.mastery ?? 0;
         const isCurrent = topic.id === current && status !== "MASTERED";
         const open = status !== "LOCKED";
         const last = index === ROADMAP.length - 1;
@@ -35,6 +37,12 @@ export function LearningRoadmap({ showBlurb = false }: { showBlurb?: boolean }) 
               {showBlurb && (
                 <p className={`mt-0.5 text-sm leading-snug ${open ? "text-mute" : "text-dim"}`}>
                   {t(topic.blurb)}
+                </p>
+              )}
+              {m && open && status !== "MASTERED" && m.stage && (
+                <p className="mt-0.5 text-xs text-mute">
+                  Stage {stageMeta(m.stage).number} · {stageMeta(m.stage).label} · {m.completedStages} of {m.totalStages}{" "}
+                  stages complete
                 </p>
               )}
               {!topic.interactive && (

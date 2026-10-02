@@ -2,6 +2,7 @@
 
 import { useId } from "react";
 import { Lock, Target } from "lucide-react";
+import type { Confidence } from "@/lib/types";
 
 export interface PanelOption {
   id: string;
@@ -17,7 +18,16 @@ interface Props {
   onSubmit: () => void;
   submitLabel: string;
   lockedLabel: string;
+  /** When given, the learner also says how sure they are before submitting. */
+  confidence?: {
+    value: Confidence | null;
+    onChange: (value: Confidence) => void;
+    label: string;
+    names: Record<Confidence, string>;
+  };
 }
+
+const LEVELS: Confidence[] = ["low", "medium", "high"];
 
 /** The "predict before you run" question. The learner must commit before Run unlocks. */
 export function PredictionPanel({
@@ -29,13 +39,15 @@ export function PredictionPanel({
   onSubmit,
   submitLabel,
   lockedLabel,
+  confidence,
 }: Props) {
   const name = useId();
+  const ready = !!selected && (!confidence || confidence.value !== null);
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        if (selected && !submitted) onSubmit();
+        if (ready && !submitted) onSubmit();
       }}
       className="rounded-2xl border border-phase/35 bg-phase/[0.06] p-4 sm:p-5"
     >
@@ -51,9 +63,7 @@ export function PredictionPanel({
               <label
                 key={option.id}
                 className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3.5 py-3 text-sm transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-ket ${
-                  checked
-                    ? "border-phase bg-phase/15"
-                    : "border-line bg-void/50 hover:border-phase/50"
+                  checked ? "border-phase bg-phase/15" : "border-line bg-void/50 hover:border-phase/50"
                 } ${submitted && !checked ? "opacity-45" : ""} ${submitted ? "cursor-default" : ""}`}
               >
                 <input
@@ -69,6 +79,33 @@ export function PredictionPanel({
             );
           })}
         </div>
+
+        {confidence && (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span id={`${name}-confidence`} className="text-sm text-mute">
+              {confidence.label}
+            </span>
+            <div role="radiogroup" aria-labelledby={`${name}-confidence`} className="flex gap-1.5">
+              {LEVELS.map((level) => {
+                const active = confidence.value === level;
+                return (
+                  <button
+                    key={level}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => confidence.onChange(level)}
+                    className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                      active ? "border-phase bg-phase/20 text-ink" : "border-line text-mute hover:border-phase/50 hover:text-ink"
+                    }`}
+                  >
+                    {confidence.names[level]}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </fieldset>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -78,7 +115,7 @@ export function PredictionPanel({
             {lockedLabel}
           </p>
         ) : (
-          <button type="submit" disabled={!selected} className="btn btn-secondary border-phase/50">
+          <button type="submit" disabled={!ready} className="btn btn-secondary border-phase/50">
             {submitLabel}
           </button>
         )}

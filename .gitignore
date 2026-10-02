@@ -30,8 +30,17 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — never commit real ones; the example files are safe to share
 .env*
+!.env.example
+!backend/.env.example
+
+# python (optional Qiskit service)
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
 
 # vercel
 .vercel

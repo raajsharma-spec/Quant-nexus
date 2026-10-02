@@ -128,8 +128,8 @@ export function buildPredictionOptions(circuit: Circuit): PredictionSet | null {
 /** Which topic a circuit mostly exercises — used to file predictions under a concept. */
 export function topicOfCircuit(circuit: Circuit): TopicId {
   const types = new Set(circuit.gates.map((g) => g.type));
-  if (types.has("CX")) return "entanglement";
-  if (types.has("H")) return "superposition";
-  if (types.has("X") || types.has("Y") || types.has("Z")) return "gates";
+  if (types.has("CX") || types.has("CZ") || types.has("CCX") || types.has("SWAP")) return "entanglement";
+  if (types.has("H") || types.has("RX") || types.has("RY")) return "superposition";
+  if (["X", "Y", "Z", "S", "T", "RZ"].some((g) => types.has(g as never))) return "gates";
   return "qubit";
 }

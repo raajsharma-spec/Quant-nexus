@@ -1,7 +1,10 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { ConceptJourney } from "@/components/journey/ConceptJourney";
 import { LessonView } from "@/components/LessonView";
 import { LESSONS, lessonFor } from "@/data/concepts";
+import { conceptContent } from "@/data/curriculum";
 import { topicTitle } from "@/data/topics";
 import type { TopicId } from "@/lib/types";
 
@@ -26,5 +29,14 @@ export default async function LessonPage({ params }: { params: Promise<{ topic: 
   const { topic } = await params;
   const lesson = lessonFor(topic as TopicId);
   if (!lesson) notFound();
+
+  // Quantum concepts are a 13-stage journey. Python Foundations is an optional warm-up lesson.
+  if (conceptContent(lesson.id)) {
+    return (
+      <Suspense fallback={<p className="text-mute">Loading the concept…</p>}>
+        <ConceptJourney topic={lesson.id} />
+      </Suspense>
+    );
+  }
   return <LessonView topic={lesson.id} lesson={lesson} />;
 }

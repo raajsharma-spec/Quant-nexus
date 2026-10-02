@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:engine": "tsx scripts/selftest.ts"
+    "test:engine": "tsx scripts/selftest.ts",
+    "test": "tsx scripts/selftest.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "geist": "^1.7.2",
@@ -30,5 +32,5 @@
   "engines": {
     "node": ">=20.9.0"
   },
-  "description": "Quantum Nexus — AI-Assisted Interactive Quantum Learning Platform (SIH 2026, PS 26140)"
+  "description": "Quantum Nexus \u2014 AI-Assisted Interactive Quantum Learning Platform (SIH 2026, PS 26140)"
 }

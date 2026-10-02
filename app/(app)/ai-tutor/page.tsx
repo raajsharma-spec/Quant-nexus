@@ -2,37 +2,49 @@
 
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
+import { BookCheck, ShieldCheck } from "lucide-react";
 import { AIChat } from "@/components/AIChat";
 import { useApp } from "@/components/AppProvider";
 import { PageHeader } from "@/components/ui";
 import { topicTitle } from "@/data/topics";
-import { currentTopic } from "@/lib/mastery";
+import type { QuickActionId } from "@/lib/aiTutor";
+import { knowledgeStats } from "@/lib/knowledgeBase";
+import { LEVEL_LABEL } from "@/lib/learnerLevel";
+import { currentStageOf, currentTopic } from "@/lib/mastery";
+import { activeMisconceptions } from "@/lib/misconceptions";
 import { getRecommendation } from "@/lib/recommendationEngine";
+import { stageMeta } from "@/lib/types";
 
 function Tutor() {
   const { state, insights, lang, t } = useApp();
-  const ask = useSearchParams().get("ask");
-  const initial =
-    ask === "why" ? t({ en: "Why did I get this result?", hi: "Mujhe yeh result kyun mila?" }) : undefined;
+  const params = useSearchParams();
+  const ask = params.get("ask");
+  const typed = params.get("q")?.slice(0, 300) || undefined;
+  // /ai-tutor?ask=why  → explain my last result     /ai-tutor?ask=mistake → review my mistake
+  // /ai-tutor?q=…      → ask this question
+  const action: QuickActionId | undefined = ask === "mistake" ? "mistake" : ask === "why" ? "result" : undefined;
 
   const last = state.lastExperiment;
   const rec = getRecommendation(state);
+  const topic = currentTopic(state);
+  const stage = currentStageOf(state, topic);
+  const misconceptions = activeMisconceptions(state);
+  const kb = knowledgeStats();
 
   return (
     <>
       <PageHeader
         title="AI Tutor"
         lead={t({
-          en: "Ask a question in your own words. Answers use your language, your current topic and your latest experiment.",
-          hi: "Apne words mein question poochho. Answers aapki language, current topic aur latest experiment use karte hain.",
+          en: "Ask in your own words, or use a quick action. Answers are retrieved from verified lesson content, name their sources, and use your stage, your level and your latest experiment.",
+          hi: "Apne words mein poochho, ya quick action use karo. Answers verified lesson content se retrieve hote hain, apne sources batate hain, aur aapka stage, level aur latest experiment use karte hain.",
         })}
       >
-        <span className="tag border-phase/40 bg-phase/10 text-phase">Contextual AI Tutor — MVP</span>
+        <span className="tag border-phase/40 bg-phase/10 text-phase">Retrieval-grounded · no LLM</span>
       </PageHeader>
 
       <div className="grid gap-5 xl:grid-cols-[1fr_20rem]">
-        <AIChat initialQuestion={initial} />
+        <AIChat initialQuestion={action ? undefined : typed} initialAction={action} />
 
         <aside className="flex flex-col gap-5">
           <section aria-labelledby="context-title" className="panel p-5">
@@ -45,8 +57,15 @@ function Tutor() {
                 <dd className="font-medium">{lang === "hi" ? "English + Hinglish" : "English"}</dd>
               </div>
               <div>
-                <dt className="text-mute">Current topic</dt>
-                <dd className="font-medium">{topicTitle(currentTopic(state))}</dd>
+                <dt className="text-mute">Current concept and stage</dt>
+                <dd className="font-medium">
+                  {topicTitle(topic)}
+                  {stage ? ` · ${stageMeta(stage).number} ${stageMeta(stage).label}` : " · complete"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-mute">Level (inferred)</dt>
+                <dd className="font-medium">{LEVEL_LABEL[insights.learner.level]}</dd>
               </div>
               <div>
                 <dt className="text-mute">Last experiment</dt>
@@ -76,6 +95,12 @@ function Tutor() {
                 </dd>
               </div>
               <div>
+                <dt className="text-mute">Possible misconceptions</dt>
+                <dd className="font-medium">
+                  {misconceptions.length === 0 ? "None open" : misconceptions.map((m) => t(m.info.title)).join(", ")}
+                </dd>
+              </div>
+              <div>
                 <dt className="text-mute">Your next move</dt>
                 <dd className="font-medium">{t(rec.title)}</dd>
               </div>
@@ -88,10 +113,16 @@ function Tutor() {
               How this tutor works
             </h2>
             <p className="mt-2 text-sm leading-relaxed text-mute">
-              This MVP tutor is rule-based and runs entirely in your browser. It matches your
-              question to a topic, then builds the answer from the context above. It is not a
-              trained AI model and it calls no AI service. A production version would connect this
-              panel to a RAG + LLM service.
+              The tutor runs entirely in your browser. It searches a verified knowledge base, builds the answer
+              from what it retrieves plus the context above, and lists its sources. If nothing relevant is
+              retrieved, it says so instead of guessing. It is not a trained AI model and it calls no AI service;
+              a production version would put an LLM behind the same retrieval step.
+            </p>
+            <p className="mt-3 flex items-start gap-2 text-sm text-mute">
+              <BookCheck size={16} className="mt-0.5 shrink-0 text-ok" aria-hidden />
+              <span>
+                Knowledge base: {kb.verified} verified entries · content v{kb.version} · updated {kb.updatedAt}
+              </span>
             </p>
           </section>
         </aside>

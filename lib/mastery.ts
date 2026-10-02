@@ -1,41 +1,58 @@
 /**
- * Mastery and unlocking.
+ * Mastery and unlocking, at the level of whole concepts.
  *
- * A topic is mastered — and the next one unlocks — when ALL of these hold:
- *   1. best mastery-check score  >=  the mastery threshold (default 80%)
- *   2. the topic's required practice challenges are solved
- *   3. there is no unresolved circuit error (the last lab run did not fail)
+ * A concept is MASTERED — and the next concept unlocks — only when every one
+ * of its learning stages has reached the mastery threshold (90% by default).
+ * The stage-by-stage rules live in lib/stages.ts; this file answers the
+ * concept-level questions: which concept is open, which one is current, how
+ * far along is the learner.
  *
- * Nothing is ever permanently blocked: the learner can always review,
- * practise again and retry the mastery check.
+ * Nothing is ever permanently blocked: every stage can be retried, and a
+ * concept that has been mastered is never taken away again.
  */
 
-import { requiredChallenges } from "@/data/challenges";
+import { challengesFor } from "@/data/challenges";
 import { INTERACTIVE_TOPICS, ROADMAP } from "@/data/topics";
+import {
+  allStagesPassed,
+  completedStageCount,
+  conceptCompletion,
+  conceptMasteryScore,
+  currentStage,
+  isStageUnlocked,
+  passes,
+  progressOf,
+  stageScore,
+} from "./stages";
 import type { AppState } from "./storage";
-import type { LoopStep, TopicId } from "./types";
+import { STAGE_IDS, type StageId, type TopicId } from "./types";
 
 export type TopicStatus = "MASTERED" | "IN PROGRESS" | "AVAILABLE" | "LOCKED";
 
 export interface TopicMastery {
   topic: TopicId;
+  /** The stage the learner is on, or null once every stage has passed. */
+  stage: StageId | null;
+  /** Score in that stage, 0–100. */
+  stageScore: number;
+  completedStages: number;
+  totalStages: number;
+  /** Share of stages complete, in %. */
+  completion: number;
+  /** 0–100: the weighted average of the stage scores. */
+  mastery: number;
+  /** The Learn stage has passed (or, for Python, the lesson is finished). */
   lessonCompleted: boolean;
-  practiceSolved: number;
-  practiceTotal: number;
-  practiceDone: boolean;
-  /** Best mastery-check score in %, or null if never taken. */
+  /** Mastery-check score in %, or null if not taken. */
   bestScore: number | null;
   lastScore: number | null;
   attempts: number;
   assessmentPassed: boolean;
-  /** 0–100 blend shown as the topic's mastery bar. */
-  mastery: number;
-  /** All three unlock conditions are met. */
+  challengesSolved: number;
+  challengesTotal: number;
+  /** Every stage has reached the threshold. */
   mastered: boolean;
 }
-
-/** How the mastery percentage is weighted. Shown to the learner for transparency. */
-export const MASTERY_WEIGHTS = { assessment: 60, practice: 25, lesson: 15 } as const;
 
 /** True when the most recent lab run ended in an error that has not been fixed yet. */
 export function hasUnresolvedError(state: AppState): boolean {
@@ -47,78 +64,106 @@ export function hasUnresolvedError(state: AppState): boolean {
   return false;
 }
 
-export function topicMastery(state: AppState, topic: TopicId): TopicMastery {
+/** Python Foundations is an optional warm-up: one lesson and one short check. */
+function pythonMastery(state: AppState): TopicMastery {
   const threshold = state.settings.masteryThreshold;
-  const lessonCompleted = state.lessons[topic]?.completed ?? false;
-
-  const required = requiredChallenges(topic);
-  const practiceSolved = required.filter((c) => state.practice[c.id]?.solved).length;
-  const practiceTotal = required.length;
-  const practiceDone = practiceSolved === practiceTotal;
-
-  const attempts = state.assessments.filter((a) => a.topic === topic);
+  const lessonCompleted = state.lessons.python?.completed ?? false;
+  const attempts = state.assessments.filter((a) => a.topic === "python");
   const scores = attempts.map((a) => Math.round((a.score / a.total) * 100));
   const bestScore = scores.length ? Math.max(...scores) : null;
   const lastScore = scores.length ? scores[scores.length - 1] : null;
-  const assessmentPassed = bestScore !== null && bestScore >= threshold;
-
-  const practiceShare = practiceTotal === 0 ? 1 : practiceSolved / practiceTotal;
-  const mastery = Math.round(
-    ((bestScore ?? 0) / 100) * MASTERY_WEIGHTS.assessment +
-      practiceShare * MASTERY_WEIGHTS.practice +
-      (lessonCompleted ? MASTERY_WEIGHTS.lesson : 0)
-  );
-
-  const mastered = assessmentPassed && practiceDone && !hasUnresolvedError(state);
-
+  const assessmentPassed = bestScore !== null && passes(bestScore, threshold);
   return {
-    topic,
+    topic: "python",
+    stage: null,
+    stageScore: 0,
+    completedStages: (lessonCompleted ? 1 : 0) + (assessmentPassed ? 1 : 0),
+    totalStages: 2,
+    completion: ((lessonCompleted ? 1 : 0) + (assessmentPassed ? 1 : 0)) * 50,
+    mastery: Math.round((bestScore ?? 0) * 0.6 + (lessonCompleted ? 40 : 0)),
     lessonCompleted,
-    practiceSolved,
-    practiceTotal,
-    practiceDone,
     bestScore,
     lastScore,
     attempts: attempts.length,
     assessmentPassed,
-    mastery,
-    mastered,
+    challengesSolved: 0,
+    challengesTotal: 0,
+    mastered: assessmentPassed,
   };
 }
 
-/** Has the learner done anything in this topic yet? */
-function hasActivity(state: AppState, topic: TopicId): boolean {
-  if (state.lessons[topic]) return true;
-  if (state.assessments.some((a) => a.topic === topic)) return true;
-  return requiredChallenges(topic).some((c) => state.practice[c.id]);
+export function topicMastery(state: AppState, topic: TopicId): TopicMastery {
+  if (topic === "python") return pythonMastery(state);
+
+  const threshold = state.settings.masteryThreshold;
+  const progress = progressOf(state, topic);
+  const stage = currentStage(progress, threshold);
+  const challenges = challengesFor(topic);
+  const attempts = state.assessments.filter((a) => a.topic === topic);
+  const taken = progress.assessAttempts > 0 || Object.keys(progress.assess).length > 0;
+  const assessNow = stageScore(progress, "assess");
+  const lastAttempt = attempts[attempts.length - 1];
+
+  return {
+    topic,
+    stage,
+    stageScore: stage ? stageScore(progress, stage) : 100,
+    completedStages: completedStageCount(progress, threshold),
+    totalStages: STAGE_IDS.length,
+    completion: conceptCompletion(progress, threshold),
+    mastery: conceptMasteryScore(progress),
+    lessonCompleted: passes(stageScore(progress, "learn"), threshold),
+    bestScore: taken ? assessNow : null,
+    lastScore: lastAttempt ? Math.round((lastAttempt.score / lastAttempt.total) * 100) : taken ? assessNow : null,
+    attempts: Math.max(progress.assessAttempts, attempts.length),
+    assessmentPassed: passes(assessNow, threshold),
+    challengesSolved: challenges.filter((c) => state.practice[c.id]?.solved).length,
+    challengesTotal: challenges.length,
+    mastered: !!progress.masteredAt || allStagesPassed(progress, threshold),
+  };
 }
 
-/**
- * A topic stays mastered once its mastery check and practice are done, even if
- * a later lab experiment fails — we never take a topic away from the learner.
- */
+/** A mastered concept stays mastered, even if the threshold is raised later. */
 function isSettled(state: AppState, topic: TopicId): boolean {
-  const m = topicMastery(state, topic);
-  if (m.mastered) return true;
-  return m.assessmentPassed && m.practiceDone && state.events.some(
-    (e) => e.type === "topicUnlocked" && e.meta?.from === topic
-  );
+  if (topic === "python") return pythonMastery(state).mastered;
+  const progress = state.concepts[topic];
+  if (!progress) return false;
+  return !!progress.masteredAt || allStagesPassed(progress, state.settings.masteryThreshold);
+}
+
+/** Is this concept open to the learner? The first one always is. */
+export function isConceptUnlocked(state: AppState, topic: TopicId): boolean {
+  if (topic === "python") return true;
+  const index = INTERACTIVE_TOPICS.indexOf(topic);
+  if (index === -1) return false; // planned modules beyond this MVP
+  return index === 0 || isSettled(state, INTERACTIVE_TOPICS[index - 1]);
 }
 
 export function topicStatus(state: AppState, topic: TopicId): TopicStatus {
   if (topic === "python") {
     if (isSettled(state, topic)) return "MASTERED";
-    return hasActivity(state, topic) ? "IN PROGRESS" : "AVAILABLE";
+    const active = !!state.lessons.python || state.assessments.some((a) => a.topic === "python");
+    return active ? "IN PROGRESS" : "AVAILABLE";
   }
-  const index = INTERACTIVE_TOPICS.indexOf(topic);
-  if (index === -1) return "LOCKED"; // planned modules beyond this MVP
+  if (!INTERACTIVE_TOPICS.includes(topic)) return "LOCKED";
   if (isSettled(state, topic)) return "MASTERED";
-  const unlocked = index === 0 || isSettled(state, INTERACTIVE_TOPICS[index - 1]);
-  if (!unlocked) return "LOCKED";
-  return hasActivity(state, topic) ? "IN PROGRESS" : "AVAILABLE";
+  if (!isConceptUnlocked(state, topic)) return "LOCKED";
+  const progress = state.concepts[topic];
+  const started = !!progress && STAGE_IDS.some((stage) => (progress.scores[stage] ?? 0) > 0);
+  return started ? "IN PROGRESS" : "AVAILABLE";
 }
 
-/** The topic the learner should be working on right now. */
+/**
+ * Can the learner open this stage of this concept right now?
+ * Used by every page that offers a stage, so a locked stage cannot be reached
+ * by typing an address or following an old link.
+ */
+export function canOpenStage(state: AppState, topic: TopicId, stage: StageId): boolean {
+  if (!isConceptUnlocked(state, topic)) return false;
+  return isStageUnlocked(progressOf(state, topic), stage, state.settings.masteryThreshold);
+}
+
+/** The concept the learner should be working on right now. */
 export function currentTopic(state: AppState): TopicId {
   for (const topic of INTERACTIVE_TOPICS) {
     if (topicStatus(state, topic) !== "MASTERED") return topic;
@@ -126,12 +171,18 @@ export function currentTopic(state: AppState): TopicId {
   return INTERACTIVE_TOPICS[INTERACTIVE_TOPICS.length - 1];
 }
 
+/** The stage the learner is on in a concept (null when the concept is complete). */
+export function currentStageOf(state: AppState, topic: TopicId): StageId | null {
+  if (topic === "python") return null;
+  return currentStage(progressOf(state, topic), state.settings.masteryThreshold);
+}
+
 /** True once every interactive module in the MVP is mastered. */
 export function allMastered(state: AppState): boolean {
   return INTERACTIVE_TOPICS.every((t) => topicStatus(state, t) === "MASTERED");
 }
 
-/** The topic that unlocks after this one, if it exists in the MVP. */
+/** The topic that unlocks after this one, if it exists on the roadmap. */
 export function nextTopic(topic: TopicId): TopicId | null {
   const index = ROADMAP.findIndex((t) => t.id === topic);
   const next = ROADMAP[index + 1];
@@ -150,19 +201,12 @@ export function roadmapProgress(state: AppState): number {
   return Math.round((done / INTERACTIVE_TOPICS.length) * 100);
 }
 
-/**
- * Where the learner is inside the learning loop for their current topic.
- * Run, Observe and Explain happen inside the lab and practice screens;
- * on the dashboard they collapse into Practice.
- */
-export function loopPosition(state: AppState): LoopStep {
-  const topic = currentTopic(state);
-  const m = topicMastery(state, topic);
-  if (allMastered(state)) return "Unlock";
-  if (!m.lessonCompleted) return "Learn";
-  const predicted = state.predictions.some((p) => p.topic === topic);
-  if (!predicted) return "Predict";
-  if (!m.practiceDone) return "Practice";
-  if (!m.assessmentPassed) return "Assess";
-  return "Unlock";
+/** Overall progress through every stage of every interactive concept, in %. */
+export function overallProgress(state: AppState): number {
+  const threshold = state.settings.masteryThreshold;
+  const done = INTERACTIVE_TOPICS.reduce(
+    (sum, topic) => sum + completedStageCount(progressOf(state, topic), threshold),
+    0
+  );
+  return Math.round((done / (INTERACTIVE_TOPICS.length * STAGE_IDS.length)) * 100);
 }

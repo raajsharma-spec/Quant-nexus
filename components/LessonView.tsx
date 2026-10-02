@@ -2,25 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, Check, Clock, Lock, Play } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Clock, Lock } from "lucide-react";
 import type { CircuitSpec } from "@/data/challenges";
-import { requiredChallenges } from "@/data/challenges";
 import { SECTION_LABEL, type Lesson, type LessonSection } from "@/data/concepts";
 import { INTERACTIVE_TOPICS, topicMeta, topicTitle } from "@/data/topics";
-import { explainCircuit } from "@/lib/explain";
 import { topicStatus } from "@/lib/mastery";
-import {
-  buildCircuit,
-  describeCircuit,
-  simulateCircuit,
-  type SimulationSuccess,
-} from "@/lib/quantumSimulator";
+import { buildCircuit } from "@/lib/quantumSimulator";
 import type { TopicId } from "@/lib/types";
 import { useApp } from "./AppProvider";
 import { ExperimentFlow } from "./ExperimentFlow";
 import { LessonWidget } from "./LessonWidgets";
-import { ProbabilityBars } from "./ProbabilityBars";
-import { QuantumCircuit } from "./QuantumCircuit";
+import { RunExample } from "./RunExample";
 import { StatusBadge } from "./ui";
 
 export function LessonView({ topic, lesson }: { topic: TopicId; lesson: Lesson }) {
@@ -78,7 +70,7 @@ export function LessonView({ topic, lesson }: { topic: TopicId; lesson: Lesson }
   };
 
   const section = step < total ? lesson.sections[step] : null;
-  const hasPractice = requiredChallenges(topic).length > 0;
+  const hasPractice = false;
 
   return (
     <div ref={top} className="scroll-mt-24">
@@ -237,7 +229,11 @@ function SectionCard({ section, topic }: { section: LessonSection; topic: TopicI
         </div>
       )}
 
-      {section.kind === "example" && circuit && <RunExample circuit={circuit} topic={topic} />}
+      {section.kind === "example" && circuit && (
+        <div className="mt-5">
+          <RunExample circuit={circuit} topic={topic} />
+        </div>
+      )}
 
       {section.kind === "predict" && circuit && (
         <div className="mt-5">
@@ -252,72 +248,6 @@ function SectionCard({ section, topic }: { section: LessonSection; topic: TopicI
 
       {section.note && <p className="mt-4 max-w-[68ch] text-sm leading-relaxed text-dim">{t(section.note)}</p>}
     </article>
-  );
-}
-
-/** A circuit the learner can run without predicting — used for worked examples. */
-function RunExample({
-  circuit,
-  topic,
-}: {
-  circuit: NonNullable<ReturnType<typeof useCircuit>>;
-  topic: TopicId;
-}) {
-  const { t, actions } = useApp();
-  const [result, setResult] = useState<SimulationSuccess | null>(null);
-
-  const run = () => {
-    const r = simulateCircuit(circuit, { shots: 1024 });
-    if (!r.ok) return;
-    setResult(r);
-    actions.track("circuitExecuted", {
-      topic,
-      detail: describeCircuit(circuit),
-      meta: {
-        gates: Array.from(new Set(circuit.gates.map((g) => g.type))).join(","),
-        source: "lesson-example",
-      },
-    });
-  };
-
-  const observed: Record<string, number> = {};
-  if (result) Object.keys(result.counts).forEach((k) => (observed[k] = result.counts[k] / result.shots));
-
-  return (
-    <div className="mt-5 grid gap-4 md:grid-cols-2">
-      <div className="well flex flex-col justify-between gap-3 px-4 py-3">
-        <QuantumCircuit circuit={circuit} trim />
-        <button type="button" onClick={run} className="btn btn-secondary self-start text-sm">
-          <Play size={15} aria-hidden />
-          {result ? t({ en: "Run it again", hi: "Dobara run karo" }) : t({ en: "Run it", hi: "Run karo" })}
-        </button>
-      </div>
-      <div className="well p-4" aria-live="polite">
-        {result ? (
-          <>
-            <p className="mb-2 text-sm font-semibold text-ket">
-              {t({ en: "What actually happened", hi: "Actually kya hua" })}
-            </p>
-            <ProbabilityBars
-              key={JSON.stringify(result.counts)}
-              values={observed}
-              counts={result.counts}
-              expected={result.probabilities}
-              approx
-              label="Measured results"
-            />
-            <p className="mt-3 text-sm leading-relaxed text-mute">{t(explainCircuit(result).summary)}</p>
-          </>
-        ) : (
-          <p className="text-sm text-dim">
-            {t({
-              en: "Run the circuit to see 1,024 simulated measurements.",
-              hi: "1,024 simulated measurements dekhne ke liye circuit run karo.",
-            })}
-          </p>
-        )}
-      </div>
-    </div>
   );
 }
 

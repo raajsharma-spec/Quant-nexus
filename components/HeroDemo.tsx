@@ -30,7 +30,7 @@ export function HeroDemo() {
         after={() => (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-void/50 px-4 py-3">
             <p className="text-sm text-mute">
-              That was the whole loop in miniature: predict, run, observe, understand.
+              That was the heart of the loop: predict, run, observe. Inside, you also explain why.
             </p>
             <Link href="/login" className="btn btn-primary">
               Start learning
