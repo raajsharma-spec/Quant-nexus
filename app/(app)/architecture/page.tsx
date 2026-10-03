@@ -31,7 +31,17 @@ const MVP_LAYERS: Layer[] = [
   {
     name: "Execution abstraction layer",
     detail: "One call runs a circuit on the browser simulator or on the optional Qiskit Aer service, and falls back honestly if that service is down.",
-    file: "lib/execution.ts · lib/circuitExport.ts",
+    file: "lib/execution.ts",
+  },
+  {
+    name: "Multi-SDK export",
+    detail: "Every circuit is written out as Qiskit, Cirq, PennyLane and OpenQASM 2.0 from one registry. Adding an SDK is one entry.",
+    file: "lib/circuitExport.ts",
+  },
+  {
+    name: "Collaboration",
+    detail: "Circuits travel as links. Learners share a progress report (scores only) that an instructor adds to the class dashboard.",
+    file: "lib/circuitLink.ts · lib/classroom.ts",
   },
   {
     name: "Retrieval-grounded AI Tutor",
@@ -80,14 +90,15 @@ const PRODUCTION_LAYERS: Layer[] = [
 const COMPARISON: Array<{ area: string; mvp: string; production: string }> = [
   { area: "Learning flow", mvp: "13 stages per concept, 90% gate, enforced in code", production: "Same engine, enforced on the server as well" },
   { area: "Circuit execution", mvp: "Browser simulator; optional local Qiskit Aer service", production: "Hosted Qiskit Aer, then cloud backends" },
-  { area: "Circuit formats", mvp: "Visual circuit, Qiskit code, OpenQASM 2.0", production: "Plus import, and other frameworks" },
+  { area: "SDK support", mvp: "Qiskit, Cirq, PennyLane and OpenQASM 2.0 code from every circuit", production: "Plus import, and execution on each SDK" },
+  { area: "Collaboration", mvp: "Shareable circuit links; progress reports shared by code or file", production: "Live classes with automatic sync" },
   { area: "Tutor", mvp: "Local retrieval over a verified knowledge base, with sources", production: "RAG + LLM over the same knowledge base" },
   { area: "Explanation scoring", mvp: "Rule-based rubric matching", production: "Rubrics plus LLM-assisted evaluation" },
   { area: "Misconceptions", mvp: "Rule-based detection, 9 catalogued", production: "Larger catalogue, tuned on real learner data" },
   { area: "Assessment", mvp: "Adaptive by difficulty; questions, build and written items", production: "Calibrated item bank" },
   { area: "Learner level", mvp: "Inferred by rules from behaviour", production: "Inferred from far more data" },
   { area: "Storage", mvp: "localStorage on one device", production: "PostgreSQL + pgvector" },
-  { area: "Analytics", mvp: "One learner; educator cohort is sample data", production: "Real cohorts" },
+  { area: "Instructor analytics", mvp: "Dashboard over shared reports, plus a labelled sample cohort", production: "Real cohorts, updated live" },
   { area: "Authentication", mvp: "None — a name on this device", production: "Real authentication and roles" },
   { area: "Hardware", mvp: "None", production: "Optional real quantum hardware" },
 ];
@@ -98,10 +109,10 @@ const FUTURE_TECH = ["Qiskit Runtime", "PennyLane", "Cirq", "OpenQASM 3", "Real 
 const ALIGNMENT: Array<{ need: string; answer: string }> = [
   { need: "Interactive learning of quantum concepts", answer: "Each concept is a 13-stage journey with widgets, a state sandbox and a visual lesson." },
   { need: "Visualisation of quantum states", answer: "A 3D Bloch sphere, probability bars, histograms and state-vector tables, all computed from the real circuit." },
-  { need: "Hands-on circuit building and simulation", answer: "Quantum Lab: 1–3 qubits, 14 gate types, shots, counts, Qiskit and OpenQASM views." },
+  { need: "Hands-on circuit building and simulation", answer: "Quantum Lab: 1–3 qubits, 14 gate types, shots and counts, with Qiskit, Cirq, PennyLane and OpenQASM code." },
   { need: "AI-based guidance", answer: "A retrieval-grounded tutor with quick actions, sources and awareness of the learner's stage, level and last result." },
   { need: "Personalised, adaptive learning", answer: "Inferred level, adaptive mastery check, misconception detection, personalised review and targeted challenges." },
-  { need: "Assessment and progress tracking", answer: "Stage scores, a 90% mastery gate, explanation scoring, analytics and an educator view." },
+  { need: "Assessment and progress tracking", answer: "Stage scores, a 90% mastery gate, explanation scoring, analytics and an instructor dashboard." },
   { need: "Accessible to beginners", answer: "No sign-up, no questionnaire, English and Hinglish, optional mathematics, free to run." },
 ];
 
@@ -113,7 +124,8 @@ const HONEST = [
   "Progress is stored in the browser. There is no database, no accounts and no real authentication in this build.",
   "The Bloch sphere is a dependency-free SVG projection you can rotate. It is not a WebGL/Three.js scene.",
   "The Watch stage is an animated visual lesson computed by the simulator. No recorded videos ship with this build.",
-  "Educator Insights shows a hand-written sample cohort, labelled DEMO ANALYTICS. Only the panel for this device is real.",
+  "The instructor dashboard reads progress reports that learners share by code or file; there is no live sync. Its sample cohort is hand-written and always labelled.",
+  "Cirq and PennyLane are export formats: the app generates their code but runs circuits in its own simulator (or Qiskit Aer).",
 ];
 
 function Stack({ layers, tone }: { layers: Layer[]; tone: "now" | "future" }) {

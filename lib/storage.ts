@@ -17,7 +17,7 @@ import { STAGE_IDS, type Confidence, type L, type Lang, type StageId, type Topic
 
 export type Mode = "live" | "demo";
 export type Role = "learner" | "educator";
-/** Kept only so older saved profiles still load. The app no longer asks for it. */
+/** The prerequisite check in onboarding: how comfortable the learner is with Python. */
 export type PythonLevel = "beginner" | "basics" | "comfortable";
 
 export interface Profile {
@@ -542,6 +542,8 @@ export function clearAll(): void {
   if (!storageAvailable()) return;
   try {
     Object.values(KEYS).forEach((key) => window.localStorage.removeItem(key));
+    // The instructor's class list (lib/classroom.ts) is part of "everything on this device".
+    window.localStorage.removeItem("quantum-nexus:class:v1");
   } catch {
     /* nothing to clear */
   }

@@ -35,7 +35,10 @@ import {
 } from "../lib/adaptiveAssessment";
 import { answerQuestion, QUICK_ACTIONS, SUGGESTED_QUESTIONS } from "../lib/aiTutor";
 import { computeInsights } from "../lib/analytics";
-import { toOpenQasm, toPayload, toQiskit, toTextDiagram } from "../lib/circuitExport";
+import { SDK_EXPORTS, toCirq, toOpenQasm, toPayload, toPennyLane, toQiskit, toTextDiagram } from "../lib/circuitExport";
+import { decodeCircuit, encodeCircuit } from "../lib/circuitLink";
+import { buildReport, classInsights, decodeReport, encodeReport, sanitizeReport, summarizeReport, upsertReport } from "../lib/classroom";
+import { sampleCohort } from "../data/educatorDemo";
 import { buildDemoState } from "../lib/demoSeed";
 import { executeCircuit } from "../lib/execution";
 import { experimentInput, observationChecks } from "../lib/experiment";
@@ -174,6 +177,98 @@ check("rotation angles are exported", toQiskit(buildCircuit(1, [["RX", 0, 0, und
 check("text diagram has one row per qubit", toTextDiagram(bellCircuit).split("\n").length >= 2);
 const payload = toPayload(bellCircuit, 512);
 check("payload carries no ids and keeps order", payload.shots === 512 && payload.gates[0].type === "H" && !("id" in payload.gates[0]));
+
+const cirqCode = toCirq(bellCircuit, 1024);
+check(
+  "Cirq code builds the same circuit",
+  cirqCode.includes("cirq.LineQubit.range(2)") && cirqCode.includes("cirq.H(q[0])") && cirqCode.includes("cirq.CNOT(q[0], q[1])")
+);
+check(
+  "Cirq code measures under one key and uses the shot count",
+  cirqCode.includes('cirq.measure(q[0], q[1], key="result")') && cirqCode.includes("repetitions=1024")
+);
+const pennyLaneCode = toPennyLane(bellCircuit, 1024);
+check(
+  "PennyLane code builds the same circuit",
+  pennyLaneCode.includes('qml.device("default.qubit", wires=2)') &&
+    pennyLaneCode.includes("qml.Hadamard(wires=0)") &&
+    pennyLaneCode.includes("qml.CNOT(wires=[0, 1])")
+);
+check(
+  "PennyLane code counts the measured wires and uses the shot count",
+  pennyLaneCode.includes("qml.counts(wires=[0, 1])") && pennyLaneCode.includes("qml.set_shots(circuit, shots=1024)")
+);
+const onlyQ1 = buildCircuit(2, [["X", 1, 0], ["M", 1, 1]]);
+check(
+  "Cirq and PennyLane measure only the measured qubits",
+  toCirq(onlyQ1).includes('cirq.measure(q[1], key="result")') && toPennyLane(onlyQ1).includes("qml.counts(wires=[1])")
+);
+const everyGate = buildCircuit(3, [
+  ["X", 0, 0], ["Y", 1, 0], ["Z", 2, 0],
+  ["S", 0, 1], ["T", 1, 1], ["RY", 2, 1, undefined, PI / 4],
+  ["CCX", 0, 2, 2, 1],
+  ["CZ", 0, 3, 1],
+  ["SWAP", 1, 4, 2],
+  ["RX", 0, 5, undefined, PI / 2], ["RZ", 1, 5, undefined, PI],
+  ["M", 0, 6], ["M", 1, 6], ["M", 2, 6],
+], 7);
+const cirqEvery = toCirq(everyGate);
+check(
+  "Cirq exports every gate type",
+  ["cirq.X(q[0])", "cirq.Y(q[1])", "cirq.Z(q[2])", "cirq.S(q[0])", "cirq.T(q[1])", "cirq.ry(pi/4)(q[2])",
+    "cirq.TOFFOLI(q[0], q[1], q[2])", "cirq.CZ(q[0], q[1])", "cirq.SWAP(q[1], q[2])", "cirq.rx(pi/2)(q[0])", "cirq.rz(pi)(q[1])",
+    "from math import pi"].every((piece) => cirqEvery.includes(piece))
+);
+const pennyLaneEvery = toPennyLane(everyGate);
+check(
+  "PennyLane exports every gate type",
+  ["qml.PauliX(wires=0)", "qml.PauliY(wires=1)", "qml.PauliZ(wires=2)", "qml.S(wires=0)", "qml.T(wires=1)", "qml.RY(pi/4, wires=2)",
+    "qml.Toffoli(wires=[0, 1, 2])", "qml.CZ(wires=[0, 1])", "qml.SWAP(wires=[1, 2])", "qml.RX(pi/2, wires=0)", "qml.RZ(pi, wires=1)",
+    "from math import pi"].every((piece) => pennyLaneEvery.includes(piece))
+);
+check(
+  "gates are exported in the order they run",
+  cirqEvery.indexOf("cirq.TOFFOLI") < cirqEvery.indexOf("cirq.CZ") &&
+    cirqEvery.indexOf("cirq.CZ") < cirqEvery.indexOf("cirq.SWAP") &&
+    cirqEvery.indexOf("cirq.SWAP") < cirqEvery.indexOf("cirq.measure") &&
+    pennyLaneEvery.indexOf("qml.Toffoli") < pennyLaneEvery.indexOf("qml.CZ") &&
+    pennyLaneEvery.indexOf("qml.SWAP") < pennyLaneEvery.indexOf("qml.counts")
+);
+const fullTurn = buildCircuit(1, [["RX", 0, 0, undefined, 2 * PI], ["M", 0, 1]]);
+check(
+  "a full turn is written as valid source (2*pi)",
+  toQiskit(fullTurn).includes("qc.rx(2*pi, 0)") && toCirq(fullTurn).includes("cirq.rx(2*pi)(q[0])") && toPennyLane(fullTurn).includes("qml.RX(2*pi, wires=0)")
+);
+const unmeasured = buildCircuit(1, [["H", 0, 0]]);
+check(
+  "without a measurement Cirq and PennyLane print the state instead of counts",
+  !toCirq(unmeasured).includes("repetitions=") &&
+    toCirq(unmeasured).includes("final_state_vector") &&
+    !toPennyLane(unmeasured).includes("qml.counts") &&
+    toPennyLane(unmeasured).includes("return qml.state()")
+);
+check(
+  "SDK registry lists Qiskit, Cirq, PennyLane and OpenQASM",
+  SDK_EXPORTS.map((sdk) => sdk.id).join(",") === "qiskit,cirq,pennylane,openqasm" &&
+    SDK_EXPORTS.map((sdk) => sdk.label).join(",") === "Qiskit,Cirq,PennyLane,OpenQASM"
+);
+for (const sdk of SDK_EXPORTS) {
+  const code = sdk.generate(bellCircuit, 1024);
+  check(`${sdk.label} export is not empty`, code.trim().length > 0);
+  check(`${sdk.label} export changes when the circuit changes`, sdk.generate(other, 1024) !== code);
+  check(`${sdk.label} export has a caption in both languages`, sdk.note.en.length > 0 && sdk.note.hi.length > 0);
+}
+check(
+  "registry generators are the named exports",
+  SDK_EXPORTS.every((sdk) => {
+    const direct = { qiskit: toQiskit(bellCircuit, 256), cirq: toCirq(bellCircuit, 256), pennylane: toPennyLane(bellCircuit, 256), openqasm: toOpenQasm(bellCircuit) };
+    return sdk.generate(bellCircuit, 256) === direct[sdk.id];
+  })
+);
+check(
+  "Python exports carry the shot count",
+  SDK_EXPORTS.filter((sdk) => sdk.language === "Python").every((sdk) => sdk.generate(bellCircuit, 777).includes("777"))
+);
 
 // ---------------------------------------------------------------------------
 console.log("Prediction options");
@@ -626,6 +721,41 @@ check("demo: an open misconception drives the recommendation", activeMisconcepti
 check("demo: mastered concepts have all 13 stages at 90 or more", (["qubit", "gates"] as TopicId[]).every((topic) => STAGE_IDS.every((stage) => stageScore(progressOf(demo, topic), stage) >= 90)));
 check("demo: locked concept has no progress", !demo.concepts.entanglement);
 check("demo: is repeatable", JSON.stringify(buildDemoState(1_700_000_000_000).predictions.map((p) => p.actual)) === JSON.stringify(buildDemoState(1_700_000_000_000).predictions.map((p) => p.actual)));
+
+// ---------------------------------------------------------------------------
+console.log("Collaboration: shared circuits and the instructor's class");
+const linkText = encodeCircuit(bellCircuit);
+const linked = decodeCircuit(linkText);
+check("a circuit survives being turned into a link and back", !!linked && describeCircuit(linked) === describeCircuit(bellCircuit));
+const rotated = buildCircuit(3, [["RX", 0, 0, undefined, PI / 4], ["CCX", 0, 1, 2, 1], ["M", 2, 2]]);
+const rotatedBack = decodeCircuit(encodeCircuit(rotated));
+check("angles and Toffoli controls survive a link", !!rotatedBack && JSON.stringify(simulateCircuit(rotatedBack)) !== "" && describeCircuit(rotatedBack) === describeCircuit(rotated));
+for (const bad of ["", "9~H.0.0", "2~EVIL.0.0", "2~H.7.0", "1~CX.0.0.0", "2~H.0.0@1.5", "2~<script>", "2~H.0.99", "x".repeat(2000)]) {
+  check(`a bad circuit link is refused: ${bad.slice(0, 14) || "(empty)"}`, decodeCircuit(bad) === null);
+}
+const demoReport = buildReport(demo);
+check("a progress report summarises the learner", demoReport.name === "Raaj" && demoReport.concepts.qubit?.mastered === true && demoReport.concepts.qubit.scores.length === 13);
+check("a report carries no written answers or tutor questions", !JSON.stringify(demoReport).includes(demo.explanations[0].text) && !("explanations" in demoReport) && !("tutorLog" in demoReport));
+const reportCode = encodeReport(demoReport);
+const reportBack = decodeReport(reportCode);
+check("a report code round-trips", reportCode.startsWith("QN1.") && JSON.stringify(reportBack) === JSON.stringify(sanitizeReport(demoReport)));
+check("a downloaded report file (JSON) is accepted too", decodeReport(JSON.stringify(demoReport))?.id === demoReport.id);
+check("junk is not accepted as a report", decodeReport("hello") === null && decodeReport("QN1.not-base64!") === null && decodeReport("{}") === null);
+const hostileReport = sanitizeReport({ ...demoReport, name: "<img src=x onerror=alert(1)>".repeat(5), explanationMastery: 5000, misconceptionsOpen: ["classical_randomness", "made_up"], concepts: { qubit: { scores: [999, -5, "x"], attempts: "no", mastered: "yes" } }, extra: "dropped" });
+check("an untrusted report is clamped and cleaned", !!hostileReport && hostileReport.name.length <= 40 && hostileReport.explanationMastery === 100 && hostileReport.misconceptionsOpen.length === 1 && hostileReport.concepts.qubit?.scores[0] === 100 && hostileReport.concepts.qubit.scores[1] === 0 && hostileReport.concepts.qubit.mastered === false && !("extra" in hostileReport));
+const demoSummary = summarizeReport(demoReport, 90);
+check("the instructor sees the learner's concept, stage and progress", demoSummary.topic === "superposition" && demoSummary.stage === "predict" && demoSummary.conceptsMastered === 2 && demoSummary.progress === insights.overallProgress);
+check("an open misconception flags the learner for attention", demoSummary.flags.some((flag) => flag.includes("misconception")));
+const cohort = sampleCohort();
+check("the sample cohort is labelled as sample", cohort.length === 6 && cohort.every((report) => report.sample === true && sanitizeReport(report) !== null));
+const classView = classInsights([demoReport, ...cohort], 90);
+check("class insights are computed from the reports", classView.learners === 7 && classView.averageProgress > 0 && classView.weakAreas.length > 0 && classView.misconceptions[0].open >= 2);
+check("class suggestions come with the rule that produced them", classView.interventions.length > 0 && classView.interventions.every((item) => item.rule.includes("IF") || item.rule.includes("No rule")));
+check("an empty class has no numbers made up", classInsights([], 90).learners === 0 && classInsights([], 90).averagePrediction === null && classInsights([], 90).interventions.length === 0);
+check("a newer report from the same learner replaces the older one", upsertReport([demoReport], { ...demoReport, minutes: 999 }).length === 1 && upsertReport([demoReport], { ...demoReport, minutes: 999 })[0].minutes === 999);
+const withPython = A.completeOnboarding(fresh, "hi", "beginner");
+check("onboarding records the Python prerequisite answer and the language", withPython.profile?.pythonLevel === "beginner" && withPython.profile.language === "hi" && withPython.profile.onboarded);
+check("the Python answer does not set the quantum level", inferLevel(withPython).level === "BEGINNER" && inferLevel(A.completeOnboarding(fresh, "en", "comfortable")).level === "BEGINNER");
 
 // ---------------------------------------------------------------------------
 console.log("Security scan of the source");

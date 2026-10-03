@@ -33,15 +33,18 @@ One learning loop, the same for every concept, in 13 stages:
 
 **The 90% rule.** A stage unlocks only when the stage before it reaches **90%**. 89% stays locked; 90% and 95% unlock; 100% is complete. Locked stages stay visible but cannot be opened by clicking, by typing an address, or by any action in the code (`lib/stages.ts`, enforced again in `lib/actions.ts`). When all 13 stages pass, the concept is **mastered** and the next concept unlocks.
 
-**No level questionnaire.** The learner's level (Beginner / Developing / Proficient / Advanced) is inferred from what they do and is used to choose question difficulty.
+**One prerequisite check, no level questionnaire.** Onboarding asks how comfortable the learner is with Python and recommends the short Python Foundations warm-up to beginners (it never blocks anything). The learner's quantum level (Beginner / Developing / Proficient / Advanced) is never asked: it is inferred from what they do and is used to choose question difficulty.
 
 ## What is in this build
 
 - **4 interactive concepts**: Qubit Fundamentals, Quantum Gates, Superposition & Measurement, Entanglement (4 more modules are on the roadmap and shown as locked).
-- **Quantum Lab**: 1–3 qubits; gates H, X, Y, Z, S, T, CX, CZ, SWAP, plus RX, RY, RZ and Toffoli in advanced mode; configurable shots; a rotatable Bloch sphere that updates as you build; the same circuit shown as **Qiskit code** and **OpenQASM 2.0**.
+- **Quantum Lab**: 1–3 qubits; gates H, X, Y, Z, S, T, CX, CZ, SWAP, plus RX, RY, RZ and Toffoli in advanced mode; configurable shots; a rotatable Bloch sphere that updates as you build.
+- **Multiple quantum SDKs**: every circuit is written out as **Qiskit**, **Cirq**, **PennyLane** and **OpenQASM 2.0** code from one registry (`lib/circuitExport.ts`); adding an SDK is one entry. The generated programs were run against qiskit 2.5 / qiskit-aer 0.17, cirq-core 1.7 and pennylane 0.45.
+- **Collaboration**: *Share circuit* copies a link that opens the same circuit in someone else's lab. Learners *Share with your instructor* from the Progress page: a report code or file holding scores and counts, never their written answers.
+- **Instructor dashboard**: add learners' shared reports to see each learner's stage-by-stage scores, accuracy, weak areas and possible misconceptions, plus class-level weak areas, stage friction and rule-based next steps. A labelled sample cohort can be switched on or off.
 - **AI Tutor**: answers from a verified knowledge base, lists its sources, and uses your stage, level, last experiment and detected misconceptions. Quick actions: Explain simply · Give me a hint · Why? · Show the math · Visualize this · Explain my result · Challenge me · Review my mistake.
 - **Explanation scoring**, **misconception detection** (9 catalogued), **adaptive mastery checks** with targeted retries, **personalised review**, **targeted challenges**, **spaced Quick Review**.
-- **Dashboard** (where you are, next action, weak areas, system status), **Progress**, **Educator Insights**, **Settings**, **References**, **Architecture**.
+- **Dashboard** (where you are, next action, weak areas), **Progress**, **Settings** (with live system checks), **References**, **Architecture**.
 - **English and Hinglish**, a **Demo learner**, and a **reset** button.
 
 ---
@@ -102,8 +105,9 @@ With the site running you can also open <http://localhost:3000/api/health>: it r
 4. **Continue Learning** → predict, run, observe, then explain in your own words. Click a locked stage to see the message that explains what unlocks it.
 5. **Quantum Lab** → build a Bell pair (H, then CX), open the Qiskit and OpenQASM tabs, run it.
 6. **AI Tutor** → "Explain my result" (it quotes your real counts) and "Review my mistake".
-7. **Progress** and **Educator Insights**, then **Architecture** for what is built versus planned.
-8. Profile menu → **Reset demo** to start clean. For a real run, choose **Continue as Learner**.
+7. **Progress** → Share with your instructor → copy the code. Switch to **Continue as Educator**, paste it into **Instructor dashboard** → the learner appears in the class.
+8. **Architecture** for what is built versus planned.
+9. Profile menu → **Reset demo** to start clean. For a real run, choose **Continue as Learner**.
 
 ---
 
@@ -115,7 +119,9 @@ Browser
  ├─ Curriculum as data (EN + Hinglish, versioned)            data/
  ├─ Stage engine and the 90% gate                            lib/stages.ts · lib/actions.ts · lib/mastery.ts
  ├─ State-vector quantum simulator                           lib/quantumSimulator.ts
- ├─ Execution abstraction layer ─────────────┐               lib/execution.ts · lib/circuitExport.ts
+ ├─ Execution abstraction layer ─────────────┐               lib/execution.ts
+ ├─ Multi-SDK export (Qiskit/Cirq/PennyLane/QASM) │          lib/circuitExport.ts
+ ├─ Collaboration (circuit links, class reports)  │          lib/circuitLink.ts · lib/classroom.ts
  ├─ Retrieval-grounded tutor                 │               lib/aiTutor.ts · lib/knowledgeBase.ts
  ├─ Explanation / misconception / assessment │               lib/explanationEvaluator.ts · lib/misconceptions.ts · lib/adaptiveAssessment.ts
  ├─ Review · recommendations · inferred level│               lib/review.ts · lib/recommendationEngine.ts · lib/learnerLevel.ts
@@ -160,7 +166,8 @@ The site deploys on Vercel as a standard Next.js project with no settings to cha
 - **The Bloch sphere is a rotatable SVG projection**, not a WebGL / Three.js scene.
 - **The Watch stage is an animated visual lesson** computed by the simulator. No recorded videos are included; the player supports a video file per concept when one is added.
 - **Four concepts are built.** Modules 05–08 (algorithms such as Deutsch–Jozsa and Grover) are on the roadmap only.
-- **Educator Insights uses a hand-written sample cohort** (labelled DEMO ANALYTICS). Only the "learner on this device" panel and the mastery threshold are real.
+- **The instructor dashboard has no live sync.** It reads reports that learners share by code or file, and keeps them in the instructor's browser. Its sample cohort is hand-written and always labelled.
+- **Cirq and PennyLane are export formats.** The app generates their code; circuits themselves run in the app's simulator (or the optional Qiskit Aer service).
 - **Stage scores are computed in the browser.** They cannot be skipped through the interface, but a determined user could edit their own browser storage; a production build would enforce the gate on a server.
 
 ## Roadmap
@@ -169,7 +176,7 @@ The site deploys on Vercel as a standard Next.js project with no settings to cha
 2. An LLM behind the existing retrieval step (RAG with pgvector), keeping sources and the "do not guess" rule.
 3. Hosted Qiskit execution, then cloud quantum backends through the same execution layer.
 4. Modules 05–08: quantum algorithms.
-5. Real cohort analytics for educators, and curriculum authoring.
+5. Live classes: reports synced automatically instead of shared by hand, and curriculum authoring.
 6. Recorded video lessons and more languages.
 
 ## Honest positioning

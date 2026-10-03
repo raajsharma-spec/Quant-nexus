@@ -38,7 +38,7 @@ const MAIN: NavItem[] = [
 ];
 
 const LOWER: NavItem[] = [
-  { href: "/educator", label: "Educator Insights", icon: GraduationCap },
+  { href: "/educator", label: "Instructor Dashboard", icon: GraduationCap },
   { href: "/architecture", label: "Architecture", icon: Network },
   { href: "/references", label: "References", icon: BookMarked },
   { href: "/settings", label: "Settings", icon: Settings },

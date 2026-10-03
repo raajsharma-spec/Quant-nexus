@@ -14,6 +14,7 @@ export default function LearnPage() {
   const { state, t } = useApp();
   const pythonStatus = topicStatus(state, "python");
   const threshold = state.settings.masteryThreshold;
+  const beginner = state.profile?.pythonLevel === "beginner";
 
   return (
     <>
@@ -42,12 +43,12 @@ export default function LearnPage() {
           {/* Prerequisite */}
           <section
             aria-labelledby="python-title"
-            className="panel p-5"
+            className={`panel p-5 ${beginner && pythonStatus !== "MASTERED" ? "border-ket/50" : ""}`}
           >
             <div className="flex items-center justify-between gap-2">
               <span className="flex items-center gap-2 text-sm font-semibold text-mute">
                 <Code2 size={17} aria-hidden />
-                Optional warm-up
+                Prerequisite
               </span>
               <StatusBadge status={pythonStatus} />
             </div>
@@ -56,12 +57,17 @@ export default function LearnPage() {
             </h2>
             <p className="mt-1 text-sm leading-relaxed text-mute">{t(PYTHON_TOPIC.blurb)}</p>
             <p className="mt-2 text-sm text-dim">
-              {t({
-                en: "Optional. It never blocks the quantum concepts.",
-                hi: "Optional. Yeh quantum concepts ko kabhi block nahi karta.",
-              })}
+              {beginner
+                ? t({
+                    en: "Recommended for you, because you said Python is new to you. It never blocks the quantum concepts.",
+                    hi: "Aapke liye recommended, kyunki aapne bataya ki Python aapke liye naya hai. Yeh quantum concepts ko kabhi block nahi karta.",
+                  })
+                : t({
+                    en: "A refresher if you want one. It never blocks the quantum concepts.",
+                    hi: "Refresher chahiye to yahan hai. Yeh quantum concepts ko kabhi block nahi karta.",
+                  })}
             </p>
-            <Link href="/learn/python" className="btn btn-secondary mt-4 text-sm">
+            <Link href="/learn/python" className={`btn mt-4 text-sm ${beginner && pythonStatus !== "MASTERED" ? "btn-primary" : "btn-secondary"}`}>
               {pythonStatus === "AVAILABLE" ? "Start Python Foundations" : "Open Python Foundations"}
               <ArrowRight size={15} aria-hidden />
             </Link>

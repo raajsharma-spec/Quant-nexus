@@ -1,11 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { useApp } from "@/components/AppProvider";
 import { Wordmark } from "@/components/Logo";
+import type { PythonLevel } from "@/lib/storage";
 import type { Lang } from "@/lib/types";
+
+/** The one prerequisite: how much Python the learner already reads. It decides the recommended first stop. */
+const PYTHON_OPTIONS: Array<{ value: PythonLevel; title: string; body: string }> = [
+  { value: "beginner", title: "I'm new to Python", body: "I have not written Python before, or only a little." },
+  { value: "basics", title: "I know the basics", body: "Variables, if statements and loops look familiar." },
+  { value: "comfortable", title: "I'm comfortable", body: "I can write functions and work with lists." },
+];
+
+/** Only allow redirects to pages inside the app. */
+function safeNext(value: string | null): string | null {
+  return value && value.startsWith("/") && !value.startsWith("//") ? value : null;
+}
 
 const LANGUAGE_OPTIONS: Array<{ value: Lang; title: string; sample: string }> = [
   {
@@ -21,10 +34,12 @@ const LANGUAGE_OPTIONS: Array<{ value: Lang; title: string; sample: string }> = 
   },
 ];
 
-export default function OnboardingPage() {
+function Onboarding() {
   const { ready, state, actions } = useApp();
   const router = useRouter();
+  const next = safeNext(useSearchParams().get("next"));
   const [step, setStep] = useState(0);
+  const [python, setPython] = useState<PythonLevel | null>(null);
   const [language, setLanguage] = useState<Lang | null>(null);
 
   const profile = state.profile;
@@ -35,12 +50,13 @@ export default function OnboardingPage() {
   if (!ready || !profile) return null;
 
   const finish = (href: string) => {
-    if (!language) return;
-    actions.completeOnboarding(language);
+    if (!language || !python) return;
+    actions.completeOnboarding(language, python);
     router.push(href);
   };
 
   const hinglish = language === "hi";
+  const beginner = python === "beginner";
   const threshold = state.settings.masteryThreshold;
   const points = hinglish
     ? [
@@ -61,7 +77,7 @@ export default function OnboardingPage() {
       <header className="flex items-center justify-between">
         <Wordmark compact />
         <p className="text-sm text-mute" aria-live="polite">
-          Step {step + 1} of 2
+          Step {step + 1} of 3
         </p>
       </header>
 
@@ -70,19 +86,42 @@ export default function OnboardingPage() {
         aria-label="Onboarding progress"
         aria-valuenow={step + 1}
         aria-valuemin={1}
-        aria-valuemax={2}
-        className="mt-5 grid grid-cols-2 gap-2"
+        aria-valuemax={3}
+        className="mt-5 grid grid-cols-3 gap-2"
       >
-        {[0, 1].map((i) => (
+        {[0, 1, 2].map((i) => (
           <span key={i} className={`h-1.5 rounded-full ${i <= step ? "bg-ket" : "bg-white/10"}`} />
         ))}
       </div>
 
       <main id="main" className="flex flex-1 flex-col justify-center py-10">
         {step === 0 && (
+          <section aria-labelledby="python-title" className="animate-rise">
+            <p className="text-mute">Hi {profile.name}. One prerequisite check before you start.</p>
+            <h1 id="python-title" className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
+              How comfortable are you with Python?
+            </h1>
+            <p className="mt-2 max-w-[60ch] text-mute">
+              Quantum circuits are often written as Python code. Your answer only decides where we suggest you begin.
+              Your quantum level is never asked: it is worked out from what you do.
+            </p>
+            <div role="radiogroup" aria-labelledby="python-title" className="mt-7 grid gap-3">
+              {PYTHON_OPTIONS.map((option) => (
+                <ChoiceCard
+                  key={option.value}
+                  selected={python === option.value}
+                  onSelect={() => setPython(option.value)}
+                  title={option.title}
+                  body={option.body}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {step === 1 && (
           <section aria-labelledby="language-title" className="animate-rise">
-            <p className="text-mute">Hi {profile.name}. One choice before you start.</p>
-            <h1 id="language-title" className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
+            <h1 id="language-title" className="text-3xl font-semibold tracking-tight sm:text-4xl">
               How would you like to learn?
             </h1>
             <p className="mt-2 max-w-[60ch] text-mute">
@@ -103,7 +142,7 @@ export default function OnboardingPage() {
           </section>
         )}
 
-        {step === 1 && (
+        {step === 2 && (
           <section aria-labelledby="start-title" className="animate-rise">
             <p className="text-mute">{hinglish ? "Aap ready ho." : "You are ready."}</p>
             <h1 id="start-title" className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -118,20 +157,53 @@ export default function OnboardingPage() {
               ))}
             </ul>
 
-            <div className="mt-8 flex flex-wrap gap-3">
-              <button type="button" onClick={() => finish("/learn/qubit")} className="btn btn-primary px-5 py-3 text-base">
-                {hinglish ? "Qubit Fundamentals start karo" : "Start Qubit Fundamentals"}
-                <ArrowRight size={18} aria-hidden />
-              </button>
-              <button type="button" onClick={() => finish("/dashboard")} className="btn btn-secondary px-5 py-3 text-base">
-                {hinglish ? "Pehle dashboard dekho" : "See my dashboard first"}
-              </button>
-            </div>
-            <p className="mt-4 text-sm text-dim">
-              {hinglish
-                ? "Python naya hai? Learn page par ek optional Python Foundations warm-up hai. Yeh kuch block nahi karta."
-                : "New to Python? There is an optional Python Foundations warm-up on the Learn page. It never blocks anything."}
+            <p className="mt-5 max-w-[62ch] rounded-xl border border-line bg-white/[0.03] px-4 py-3 leading-relaxed text-ink/90">
+              {beginner
+                ? hinglish
+                  ? "Aapne bataya ki Python aapke liye naya hai. Pehle chhota Python Foundations warm-up recommended hai — variables, conditions, loops, functions aur lists. Ise kabhi bhi skip kar sakte ho."
+                  : "You said Python is new to you. We recommend the short Python Foundations warm-up first: variables, conditions, loops, functions and lists. You can skip it at any time."
+                : hinglish
+                  ? "Aapko Python aata hai, isliye seedha qubits se start karo. Python Foundations Learn page par refresher ke liye available rahega."
+                  : "You already read Python, so start straight with qubits. Python Foundations stays on the Learn page if you want a refresher."}
             </p>
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              {next && (
+                <button type="button" onClick={() => finish(next)} className="btn btn-primary px-5 py-3 text-base">
+                  {next === "/lab" ? (hinglish ? "Quantum Lab kholo" : "Open the Quantum Lab") : hinglish ? "Continue karo" : "Continue"}
+                  <ArrowRight size={18} aria-hidden />
+                </button>
+              )}
+              {beginner ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => finish("/learn/python")}
+                    className={`btn px-5 py-3 text-base ${next ? "btn-secondary" : "btn-primary"}`}
+                  >
+                    {hinglish ? "Python Foundations start karo" : "Start Python Foundations"}
+                    {!next && <ArrowRight size={18} aria-hidden />}
+                  </button>
+                  <button type="button" onClick={() => finish("/learn/qubit")} className="btn btn-secondary px-5 py-3 text-base">
+                    {hinglish ? "Skip karke Qubit Fundamentals start karo" : "Skip to Qubit Fundamentals"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => finish("/learn/qubit")}
+                    className={`btn px-5 py-3 text-base ${next ? "btn-secondary" : "btn-primary"}`}
+                  >
+                    {hinglish ? "Qubit Fundamentals start karo" : "Start Qubit Fundamentals"}
+                    {!next && <ArrowRight size={18} aria-hidden />}
+                  </button>
+                  <button type="button" onClick={() => finish("/dashboard")} className="btn btn-secondary px-5 py-3 text-base">
+                    {hinglish ? "Pehle dashboard dekho" : "See my dashboard first"}
+                  </button>
+                </>
+              )}
+            </div>
           </section>
         )}
       </main>
@@ -146,14 +218,27 @@ export default function OnboardingPage() {
           <ArrowLeft size={17} aria-hidden />
           Back
         </button>
-        {step < 1 && (
-          <button type="button" onClick={() => setStep(1)} disabled={!language} className="btn btn-primary px-5">
+        {step < 2 && (
+          <button
+            type="button"
+            onClick={() => setStep((s) => s + 1)}
+            disabled={step === 0 ? !python : !language}
+            className="btn btn-primary px-5"
+          >
             Continue
             <ArrowRight size={17} aria-hidden />
           </button>
         )}
       </footer>
     </div>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={null}>
+      <Onboarding />
+    </Suspense>
   );
 }
 

@@ -10,6 +10,7 @@ import type {
   AppState,
   AssessmentAnswer,
   EventType,
+  PythonLevel,
   Settings,
   StagePrediction,
   StageRun,
@@ -23,7 +24,7 @@ export interface AppActions {
   enterAsLearner: (name: string) => void;
   enterAsEducator: () => void;
   startDemo: () => void;
-  completeOnboarding: (language: Lang) => void;
+  completeOnboarding: (language: Lang, pythonLevel?: PythonLevel | null) => void;
   setLanguage: (language: Lang) => void;
   setThreshold: (value: number) => void;
   updateSettings: (patch: Partial<Settings>) => void;
@@ -80,7 +81,7 @@ const actions: AppActions = {
     store.update((s) => A.enterAsEducator(s));
   },
   startDemo: () => store.startDemo(),
-  completeOnboarding: (language) => store.update((s) => A.completeOnboarding(s, language)),
+  completeOnboarding: (language, pythonLevel = null) => store.update((s) => A.completeOnboarding(s, language, pythonLevel)),
   setLanguage: (language) => store.update((s) => A.setLanguage(s, language)),
   setThreshold: (value) => store.update((s) => A.setThreshold(s, value)),
   updateSettings: (patch) => store.update((s) => A.updateSettings(s, patch)),

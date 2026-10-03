@@ -5,6 +5,7 @@ import { ActivityFeed } from "@/components/ActivityFeed";
 import { useApp } from "@/components/AppProvider";
 import { MasteryCard } from "@/components/MasteryCard";
 import { RecommendationCard } from "@/components/RecommendationCard";
+import { ShareProgress } from "@/components/ShareProgress";
 import { DemoBadge, EmptyState, Meter, PageHeader, Ring } from "@/components/ui";
 import { challengesFor } from "@/data/challenges";
 import { INTERACTIVE_TOPICS, topicTitle } from "@/data/topics";
@@ -335,6 +336,11 @@ export default function ProgressPage() {
           )}
           <p className="mt-3 text-xs text-dim">Your words are stored only on this device.</p>
         </section>
+
+        {/* Collaboration: hand this progress to an instructor */}
+        <div className="xl:col-span-12">
+          <ShareProgress />
+        </div>
 
         {/* Recent activity */}
         <section aria-labelledby="activity-title" className="panel p-5 sm:p-6 xl:col-span-12">

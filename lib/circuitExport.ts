@@ -1,20 +1,26 @@
 /**
  * Turns the learner's circuit into other representations:
- *   - Qiskit (Python) code they can paste into a notebook
+ *   - Qiskit, Cirq and PennyLane (Python) code they can paste into a notebook
  *   - OpenQASM 2.0
  *   - a plain-text circuit diagram
  *
  * Everything here is GENERATED from the actual circuit object — nothing is
  * hard-coded. The same circuit description is what the optional Qiskit
  * service receives (see lib/execution.ts and backend/main.py).
+ *
+ * The SDKs offered to the learner are listed once, in SDK_EXPORTS at the
+ * bottom of this file. Supporting another SDK means writing one generator and
+ * adding one entry there.
  */
 
 import {
   angleLabel,
   gateWires,
   orderedGates,
+  ROTATION_GATES,
   type Circuit,
   type CircuitGate,
+  type GateType,
 } from "./quantumSimulator";
 
 /** Qubits that carry a measurement, in wire order. Classical bit k reads the k-th of these. */
@@ -28,12 +34,17 @@ export function measuredQubits(circuit: Circuit): number[] {
 
 const theta = (gate: CircuitGate) => gate.theta ?? Math.PI / 2;
 
-/** Angle written as Python/QASM source, e.g. "pi/2". */
+/** Angle written as Python/QASM source, e.g. "pi/2" or "2*pi". */
 function angleSource(value: number): string {
   const label = angleLabel(value);
-  if (/π/.test(label)) return label.replace("π", "pi").replace("−", "-");
+  if (/π/.test(label)) return label.replace("2π", "2*pi").replace("π", "pi").replace("−", "-");
   return value.toFixed(6);
 }
+
+/** True when the generated Python needs `pi` for a rotation angle. */
+const hasRotation = (circuit: Circuit) => circuit.gates.some((g) => ROTATION_GATES.includes(g.type));
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
 // ---------------------------------------------------------------------------
 // Qiskit
@@ -97,6 +108,138 @@ export function toQiskit(circuit: Circuit, shots = 1024): string {
     lines.push("# Note: Qiskit prints the LAST classical bit on the left.");
     lines.push("# Quantum Nexus writes results as |q0 q1⟩ with q0 on the left.");
   }
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Cirq
+// ---------------------------------------------------------------------------
+
+/** One Cirq operation for a gate, e.g. "cirq.CNOT(q[0], q[1])". */
+function cirqOp(gate: CircuitGate): string {
+  const q = `q[${gate.qubit}]`;
+  switch (gate.type) {
+    case "H":
+    case "X":
+    case "Y":
+    case "Z":
+    case "S":
+    case "T":
+      return `cirq.${gate.type}(${q})`;
+    case "RX":
+    case "RY":
+    case "RZ":
+      return `cirq.${gate.type.toLowerCase()}(${angleSource(theta(gate))})(${q})`;
+    case "CX":
+      return `cirq.CNOT(${q}, q[${gate.target}])`;
+    case "CZ":
+      return `cirq.CZ(${q}, q[${gate.target}])`;
+    case "SWAP":
+      return `cirq.SWAP(${q}, q[${gate.target}])`;
+    case "CCX":
+      return `cirq.TOFFOLI(${q}, q[${gate.control2}], q[${gate.target}])`;
+    default:
+      return "";
+  }
+}
+
+/**
+ * A complete, runnable Cirq program for the circuit. It prints the counts as
+ * bitstrings in Quantum Nexus order: lowest measured qubit on the left.
+ */
+export function toCirq(circuit: Circuit, shots = 1024): string {
+  const measured = measuredQubits(circuit);
+  const lines: string[] = [];
+  if (hasRotation(circuit)) lines.push("from math import pi");
+  lines.push("import cirq");
+  lines.push("");
+  lines.push(`q = cirq.LineQubit.range(${circuit.qubits})  # ${plural(circuit.qubits, "qubit")}`);
+  lines.push("circuit = cirq.Circuit()");
+  for (const gate of orderedGates(circuit)) {
+    if (gate.type === "M") continue;
+    lines.push(`circuit.append(${cirqOp(gate)})`);
+  }
+
+  if (measured.length === 0) {
+    lines.push("");
+    lines.push("# Nothing is measured yet, so this prints the final state vector instead of counts.");
+    lines.push("print(cirq.Simulator().simulate(circuit, qubit_order=q).final_state_vector)");
+    return lines.join("\n");
+  }
+  lines.push(`circuit.append(cirq.measure(${measured.map((m) => `q[${m}]`).join(", ")}, key="result"))`);
+  lines.push("");
+  lines.push(`result = cirq.Simulator().run(circuit, repetitions=${shots})`);
+  lines.push("# One character per measured qubit, lowest qubit on the left (the Quantum Nexus order).");
+  lines.push('counts = result.histogram(key="result", fold_func=lambda bits: "".join(str(int(b)) for b in bits))');
+  lines.push("print(dict(sorted(counts.items())))");
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// PennyLane
+// ---------------------------------------------------------------------------
+
+/** PennyLane class names for the gates that take no angle. */
+const PENNYLANE_NAMES: Partial<Record<GateType, string>> = {
+  H: "Hadamard",
+  X: "PauliX",
+  Y: "PauliY",
+  Z: "PauliZ",
+  S: "S",
+  T: "T",
+  CX: "CNOT",
+  CZ: "CZ",
+  SWAP: "SWAP",
+  CCX: "Toffoli",
+};
+
+/** One PennyLane operation for a gate, e.g. "qml.CNOT(wires=[0, 1])". */
+function pennyLaneOp(gate: CircuitGate): string {
+  if (ROTATION_GATES.includes(gate.type)) {
+    return `qml.${gate.type}(${angleSource(theta(gate))}, wires=${gate.qubit})`;
+  }
+  const name = PENNYLANE_NAMES[gate.type];
+  if (!name) return "";
+  const wires = gateWires(gate);
+  return `qml.${name}(wires=${wires.length === 1 ? wires[0] : `[${wires.join(", ")}]`})`;
+}
+
+/**
+ * A complete, runnable PennyLane program for the circuit on the default.qubit
+ * device. It prints the counts as bitstrings in Quantum Nexus order: lowest
+ * measured qubit on the left.
+ *
+ * Shots are set with `qml.set_shots(circuit, shots=...)`, which exists from
+ * PennyLane 0.42 on. The older ways (shots on the device, or passed when the
+ * circuit is called) are deprecated in current releases.
+ */
+export function toPennyLane(circuit: Circuit, shots = 1024): string {
+  const measured = measuredQubits(circuit);
+  const lines: string[] = [];
+  if (hasRotation(circuit)) lines.push("from math import pi");
+  lines.push("import pennylane as qml");
+  lines.push("");
+  lines.push(`dev = qml.device("default.qubit", wires=${circuit.qubits})  # ${plural(circuit.qubits, "qubit")}`);
+  lines.push("");
+  lines.push("@qml.qnode(dev)");
+  lines.push("def circuit():");
+  for (const gate of orderedGates(circuit)) {
+    if (gate.type === "M") continue;
+    lines.push(`    ${pennyLaneOp(gate)}`);
+  }
+
+  if (measured.length === 0) {
+    lines.push("    return qml.state()");
+    lines.push("");
+    lines.push("# Nothing is measured yet, so this prints the final state vector instead of counts.");
+    lines.push("print(circuit())");
+    return lines.join("\n");
+  }
+  lines.push(`    return qml.counts(wires=[${measured.join(", ")}])`);
+  lines.push("");
+  lines.push(`counts = qml.set_shots(circuit, shots=${shots})()`);
+  lines.push("# One character per measured wire, lowest wire on the left (the Quantum Nexus order).");
+  lines.push("print({str(bits): int(n) for bits, n in sorted(counts.items())})");
   return lines.join("\n");
 }
 
@@ -232,3 +375,62 @@ export function toPayload(circuit: Circuit, shots: number): CircuitPayload {
     }),
   };
 }
+
+// ---------------------------------------------------------------------------
+// SDK registry
+// ---------------------------------------------------------------------------
+
+export type SdkId = "qiskit" | "cirq" | "pennylane" | "openqasm";
+
+/** One way of writing the circuit down as code. `note` is the caption shown under the code. */
+export interface SdkExport {
+  id: SdkId;
+  label: string;
+  language: "Python" | "OpenQASM 2.0";
+  note: { en: string; hi: string };
+  generate: (circuit: Circuit, shots: number) => string;
+}
+
+/** Every SDK the circuit can be exported to, in the order the tabs are shown. */
+export const SDK_EXPORTS: SdkExport[] = [
+  {
+    id: "qiskit",
+    label: "Qiskit",
+    language: "Python",
+    note: {
+      en: "Runnable Python. Paste it into a notebook with qiskit and qiskit-aer installed.",
+      hi: "Runnable Python. Ise aise notebook mein paste karo jisme qiskit aur qiskit-aer installed ho.",
+    },
+    generate: toQiskit,
+  },
+  {
+    id: "cirq",
+    label: "Cirq",
+    language: "Python",
+    note: {
+      en: "Runnable Python. Paste it into a notebook with cirq installed.",
+      hi: "Runnable Python. Ise aise notebook mein paste karo jisme cirq installed ho.",
+    },
+    generate: toCirq,
+  },
+  {
+    id: "pennylane",
+    label: "PennyLane",
+    language: "Python",
+    note: {
+      en: "Runnable Python. Paste it into a notebook with pennylane 0.42 or newer installed.",
+      hi: "Runnable Python. Ise aise notebook mein paste karo jisme pennylane 0.42 ya usse naya installed ho.",
+    },
+    generate: toPennyLane,
+  },
+  {
+    id: "openqasm",
+    label: "OpenQASM",
+    language: "OpenQASM 2.0",
+    note: {
+      en: "OpenQASM 2.0 — the text format most quantum frameworks can import.",
+      hi: "OpenQASM 2.0 — woh text format jo zyada-tar quantum frameworks import kar sakte hain.",
+    },
+    generate: (circuit) => toOpenQasm(circuit),
+  },
+];

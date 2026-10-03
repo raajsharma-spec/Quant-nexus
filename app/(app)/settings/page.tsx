@@ -177,23 +177,21 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <fieldset className="mt-5 border-t border-line pt-5">
-            <legend className="font-medium">{t({ en: "Where circuits run", hi: "Circuits kahan run hote hain" })}</legend>
-            <div className="mt-2 flex flex-col gap-2">
-              {(["browser", "qiskit"] as BackendId[]).map((backend) => {
-                const disabled = backend === "qiskit" && !qiskitConfigured;
-                return (
+          <div className="mt-5 border-t border-line pt-5">
+            <p className="font-medium">{t({ en: "Where circuits run", hi: "Circuits kahan run hote hain" })}</p>
+            {qiskitConfigured ? (
+              <div role="radiogroup" aria-label="Where circuits run" className="mt-2 flex flex-col gap-2">
+                {(["browser", "qiskit"] as BackendId[]).map((backend) => (
                   <label
                     key={backend}
-                    className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${
+                    className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 ${
                       settings.backend === backend ? "border-ket bg-ket/10" : "border-line"
-                    } ${disabled ? "opacity-60" : "cursor-pointer"}`}
+                    }`}
                   >
                     <input
                       type="radio"
                       name="backend"
                       checked={settings.backend === backend}
-                      disabled={disabled}
                       onChange={() => actions.updateSettings({ backend })}
                       className="mt-1 h-4 w-4 shrink-0 accent-[#5ad7f0]"
                     />
@@ -201,26 +199,24 @@ export default function SettingsPage() {
                       <span className="block font-medium">{BACKEND_LABEL[backend]}</span>
                       <span className="block text-sm text-mute">
                         {backend === "browser"
-                          ? t({
-                              en: "Always available. Runs on this device; nothing is sent anywhere.",
-                              hi: "Hamesha available. Is device par run hota hai; kuch bhi kahin nahi bheja jaata.",
-                            })
+                          ? t({ en: "Always available. Runs on this device.", hi: "Hamesha available. Is device par run hota hai." })
                           : service === null
                             ? t({ en: "Checking…", hi: "Check ho raha hai…" })
                             : service.detail}
                       </span>
                     </span>
                   </label>
-                );
-              })}
-            </div>
-            <p className="mt-2 text-sm text-dim">
-              {t({
-                en: "The Qiskit Aer service is optional. See the README for how to start it. If it stops answering, runs fall back to the browser simulator and say so.",
-                hi: "Qiskit Aer service optional hai. Ise start karne ke liye README dekho. Agar yeh answer na de, to runs browser simulator par chale jaate hain aur yeh batate hain.",
-              })}
-            </p>
-          </fieldset>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-1 text-sm leading-relaxed text-mute">
+                {t({
+                  en: "In the built-in quantum simulator, on this device. Every circuit is also written out as Qiskit, Cirq, PennyLane and OpenQASM code that you can run elsewhere.",
+                  hi: "Built-in quantum simulator mein, isi device par. Har circuit Qiskit, Cirq, PennyLane aur OpenQASM code mein bhi likha jaata hai jise aap kahin aur run kar sakte ho.",
+                })}
+              </p>
+            )}
+          </div>
         </section>
 
         {/* System status */}
@@ -230,8 +226,8 @@ export default function SettingsPage() {
           </h2>
           <p className="mb-4 mt-1 text-sm text-mute">
             {t({
-              en: "Each line is checked for real when this page opens. Nothing is shown as online without a passing check.",
-              hi: "Yeh page khulte hi har line real mein check hoti hai. Bina passing check ke kuch bhi online nahi dikhta.",
+              en: "Every service this platform runs on, checked live when this page opens.",
+              hi: "Yeh platform jin services par chalta hai, page khulte hi live check hoti hain.",
             })}
           </p>
           <SystemStatus />

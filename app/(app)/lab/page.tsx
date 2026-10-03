@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Eraser, Lock, MessageCircleQuestion, Pencil, RotateCcw, Sparkles } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { AlertTriangle, Check, Eraser, Link2, Lock, MessageCircleQuestion, Pencil, RotateCcw, Sparkles } from "lucide-react";
 import { useApp } from "@/components/AppProvider";
 import { BlochSphere3D } from "@/components/BlochSphere3D";
 import { CircuitCode } from "@/components/CircuitCode";
@@ -11,6 +12,7 @@ import { ExperimentFlow, type FlowStage } from "@/components/ExperimentFlow";
 import { ProbabilityBars } from "@/components/ProbabilityBars";
 import { QuantumCircuit } from "@/components/QuantumCircuit";
 import { PageHeader } from "@/components/ui";
+import { decodeCircuit, encodeCircuit } from "@/lib/circuitLink";
 import { BACKEND_LABEL, checkQiskitService, qiskitApiUrl, type BackendId, type ServiceStatus } from "@/lib/execution";
 import { topicOfCircuit } from "@/lib/prediction";
 import {
@@ -57,9 +59,13 @@ const STAGE_ORDER: Stage[] = ["build", "predict", "run", "observe"];
 
 const emptyCircuit = (qubits: number): Circuit => ({ qubits, steps: STEPS, gates: [] });
 
-export default function LabPage() {
+function Lab() {
   const { state, t, actions } = useApp();
-  const [circuit, setCircuit] = useState<Circuit>(() => emptyCircuit(2));
+  // A shared link (/lab?c=…) opens the lab with that circuit already on the wires.
+  const shared = useSearchParams().get("c");
+  const [circuit, setCircuit] = useState<Circuit>(() => decodeCircuit(shared, STEPS) ?? emptyCircuit(2));
+  const [opened] = useState(() => (shared ? (decodeCircuit(shared, STEPS) ? "ok" : "bad") : null));
+  const [copied, setCopied] = useState(false);
   const [stage, setStage] = useState<Stage>("build");
   const [error, setError] = useState<SimulationError | null>(null);
   /** Changes on every new experiment so the prediction panel starts fresh. */
@@ -145,6 +151,18 @@ export default function LabPage() {
     setStage("predict");
   };
 
+  /** Copy a link that opens this exact circuit in someone else's lab. */
+  const share = async () => {
+    const link = `${window.location.origin}/lab?c=${encodeURIComponent(encodeCircuit(circuit))}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2500);
+    } catch {
+      window.prompt(t({ en: "Copy this link:", hi: "Yeh link copy karo:" }), link);
+    }
+  };
+
   const stageIndex = STAGE_ORDER.indexOf(stage);
   const backend = state.settings.backend;
 
@@ -203,12 +221,35 @@ export default function LabPage() {
                   Edit circuit
                 </button>
               )}
+              <button
+                type="button"
+                onClick={share}
+                disabled={circuit.gates.length === 0}
+                className="btn btn-ghost px-3 py-2 text-sm"
+              >
+                {copied ? <Check size={16} aria-hidden /> : <Link2 size={16} aria-hidden />}
+                <span aria-live="polite">{copied ? "Link copied" : "Share circuit"}</span>
+              </button>
               <button type="button" onClick={resetLab} className="btn btn-ghost px-3 py-2 text-sm">
                 <RotateCcw size={16} aria-hidden />
                 Reset lab
               </button>
             </div>
           </div>
+
+          {opened && (
+            <p role="status" className={`mb-3 rounded-xl border px-4 py-2.5 text-sm ${opened === "ok" ? "border-ket/35 bg-ket/[0.06]" : "border-warn/40 bg-warn/10 text-warn"}`}>
+              {opened === "ok"
+                ? t({
+                    en: "This circuit was opened from a shared link. Change it freely: your copy is your own.",
+                    hi: "Yeh circuit shared link se khula hai. Ise freely change karo: yeh aapki apni copy hai.",
+                  })
+                : t({
+                    en: "That shared link does not contain a valid circuit, so the lab started empty.",
+                    hi: "Us shared link mein valid circuit nahi hai, isliye lab empty start hua.",
+                  })}
+            </p>
+          )}
 
           {building && (
             <div className="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3 text-sm">
@@ -248,23 +289,22 @@ export default function LabPage() {
                   ))}
                 </div>
               </div>
-              <div>
-                <label htmlFor="lab-backend" className="mb-1.5 block text-mute">
-                  {t({ en: "Runs on", hi: "Runs on" })}
-                </label>
-                <select
-                  id="lab-backend"
-                  value={backend}
-                  onChange={(event) => actions.updateSettings({ backend: event.target.value as BackendId })}
-                  className="rounded-lg border border-line bg-void/70 px-3 py-2"
-                >
-                  <option value="browser">{BACKEND_LABEL.browser}</option>
-                  <option value="qiskit" disabled={!qiskitConfigured}>
-                    {BACKEND_LABEL.qiskit}
-                    {qiskitConfigured ? "" : " (not connected)"}
-                  </option>
-                </select>
-              </div>
+              {qiskitConfigured && (
+                <div>
+                  <label htmlFor="lab-backend" className="mb-1.5 block text-mute">
+                    {t({ en: "Runs on", hi: "Runs on" })}
+                  </label>
+                  <select
+                    id="lab-backend"
+                    value={backend}
+                    onChange={(event) => actions.updateSettings({ backend: event.target.value as BackendId })}
+                    className="rounded-lg border border-line bg-void/70 px-3 py-2"
+                  >
+                    <option value="browser">{BACKEND_LABEL.browser}</option>
+                    <option value="qiskit">{BACKEND_LABEL.qiskit}</option>
+                  </select>
+                </div>
+              )}
               {!state.settings.advancedMode && (
                 <label className="flex cursor-pointer items-center gap-2 pb-2 text-mute">
                   <input
@@ -398,7 +438,7 @@ export default function LabPage() {
 
           <section aria-labelledby="code-title" className="panel min-w-0 p-4 sm:p-5">
             <h2 id="code-title" className="mb-3 text-lg font-semibold">
-              {t({ en: "Circuit, Qiskit and OpenQASM", hi: "Circuit, Qiskit aur OpenQASM" })}
+              {t({ en: "Your circuit in four SDK formats", hi: "Aapka circuit chaar SDK formats mein" })}
             </h2>
             <CircuitCode circuit={circuit} shots={state.settings.shots} qiskitDiagram={qiskitDiagram} />
           </section>
@@ -443,5 +483,13 @@ export default function LabPage() {
         </p>
       </div>
     </>
+  );
+}
+
+export default function LabPage() {
+  return (
+    <Suspense fallback={null}>
+      <Lab />
+    </Suspense>
   );
 }

@@ -165,7 +165,10 @@ export function enterAsEducator(state: AppState): AppState {
   };
 }
 
-/** Onboarding only records the learning language. The learner's level is inferred, never asked. */
+/**
+ * Onboarding records the learning language and the one prerequisite check (Python comfort).
+ * The learner's quantum level is inferred from behaviour, never asked.
+ */
 export function completeOnboarding(state: AppState, language: Lang, pythonLevel: PythonLevel | null = null): AppState {
   if (!state.profile) return state;
   return { ...state, profile: { ...state.profile, pythonLevel, language, onboarded: true } };

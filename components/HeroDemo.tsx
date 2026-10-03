@@ -19,8 +19,8 @@ export function HeroDemo() {
   return (
     <div className="panel-lead p-4 sm:p-6">
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold">Try the core idea right here</h2>
-        <p className="text-sm text-mute">A live circuit, simulated in your browser.</p>
+        <p className="text-lg font-semibold">A live circuit</p>
+        <p className="text-sm text-mute">Simulated in your browser.</p>
       </div>
       <ExperimentFlow
         circuit={circuit}

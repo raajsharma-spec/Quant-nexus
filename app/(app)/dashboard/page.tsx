@@ -27,7 +27,6 @@ import { NextMoveCard } from "@/components/NextMoveCard";
 import { PredictionInsight } from "@/components/PredictionInsight";
 import { ProgressCard } from "@/components/ProgressCard";
 import { QuickReview } from "@/components/QuickReview";
-import { SystemStatus } from "@/components/SystemStatus";
 import { DemoBadge, Meter, Ring } from "@/components/ui";
 import { LEVEL_LABEL } from "@/lib/learnerLevel";
 import { allMastered, topicMastery } from "@/lib/mastery";
@@ -363,17 +362,6 @@ export default function DashboardPage() {
             </Link>
           </section>
 
-          <section aria-labelledby="status-title" className="panel p-5 sm:p-6">
-            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <h2 id="status-title" className="text-lg font-semibold">
-                {t({ en: "System status", hi: "System status" })}
-              </h2>
-              <Link href="/settings" className="text-sm font-medium text-ket hover:underline">
-                {t({ en: "Details", hi: "Details" })}
-              </Link>
-            </div>
-            <SystemStatus compact />
-          </section>
         </div>
       </div>
     </>

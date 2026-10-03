@@ -2,6 +2,9 @@ import type { Metadata, Viewport } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { AppProvider } from "@/components/AppProvider";
+import "@fontsource/stix-two-text/latin-400.css";
+import "@fontsource/stix-two-text/latin-500.css";
+import "@fontsource/stix-two-text/latin-400-italic.css";
 import "./globals.css";
 
 export const metadata: Metadata = {

@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { CircleCheck, CircleDashed, CircleX, Loader, RefreshCw } from "lucide-react";
-import { checkQiskitService } from "@/lib/execution";
+import { SDK_EXPORTS } from "@/lib/circuitExport";
+import { checkQiskitService, qiskitApiUrl } from "@/lib/execution";
 import { checkKnowledgeBase, checkQuantumEngine, checkTutor, type ServiceState } from "@/lib/health";
+import { buildCircuit } from "@/lib/quantumSimulator";
 import { storageCheck } from "@/lib/storage";
 
 type RowState = ServiceState | "checking";
@@ -16,9 +18,9 @@ interface Row {
 }
 
 const LABEL: Record<RowState, string> = {
-  online: "Online",
+  online: "Connected",
   offline: "Unavailable",
-  not_configured: "Not connected",
+  not_configured: "Not set up",
   checking: "Checking…",
 };
 
@@ -38,24 +40,38 @@ function StateIcon({ state }: { state: RowState }) {
 
 const CHECKING = (id: string, name: string): Row => ({ id, name, state: "checking", detail: "" });
 
+/** The services this build runs on. The Qiskit Aer row is added only when that service is set up. */
 const INITIAL: Row[] = [
   CHECKING("engine", "Quantum simulator"),
-  CHECKING("tutor", "AI Tutor"),
+  CHECKING("tutor", "AI Tutor engine"),
   CHECKING("knowledge", "Knowledge base"),
-  CHECKING("storage", "Progress storage"),
+  CHECKING("storage", "Learning data store"),
+  CHECKING("sdk", "SDK export"),
   CHECKING("api", "Application server"),
-  CHECKING("qiskit", "Qiskit Aer service"),
-  { id: "database", name: "Database", state: "not_configured", detail: "No database in this build. Progress is stored in this browser." },
-  { id: "llm", name: "LLM", state: "not_configured", detail: "No LLM is connected. The tutor answers from the verified knowledge base." },
+  ...(qiskitApiUrl() ? [CHECKING("qiskit", "Qiskit Aer service")] : []),
 ];
 
+/** Generate code for a Bell pair in every supported SDK and make sure each one came out. */
+function checkSdkExport(): { ok: boolean; detail: string } {
+  try {
+    const bell = buildCircuit(2, [["H", 0, 0], ["CX", 0, 1, 1], ["M", 0, 2], ["M", 1, 2]]);
+    const working = SDK_EXPORTS.filter((sdk) => sdk.generate(bell, 1024).trim().length > 40);
+    return working.length === SDK_EXPORTS.length
+      ? { ok: true, detail: `Code generated for ${SDK_EXPORTS.map((sdk) => sdk.label).join(", ")}.` }
+      : { ok: false, detail: "One of the SDK code generators returned nothing." };
+  } catch {
+    return { ok: false, detail: "The SDK code generators could not run." };
+  }
+}
+
 /**
- * Real service checks — nothing here is hard-coded as "online".
+ * Real service checks — nothing here is hard-coded as connected.
  * Each row is the result of actually exercising that service just now:
  *   simulator / tutor / knowledge base : self-tests run in this browser
- *   progress storage                   : a real write, read and delete
+ *   learning data store                : a real write, read and delete in browser storage
+ *   SDK export                         : code generated for every supported SDK
  *   application server                 : GET /api/health
- *   Qiskit Aer service                 : GET <service>/api/health (only if configured)
+ *   Qiskit Aer service                 : GET <service>/api/health (shown only when set up)
  */
 export function SystemStatus({ compact = false }: { compact?: boolean }) {
   const [rows, setRows] = useState<Row[]>(INITIAL);
@@ -76,6 +92,8 @@ export function SystemStatus({ compact = false }: { compact?: boolean }) {
     set("knowledge", knowledge.status, knowledge.detail);
     const storage = storageCheck();
     set("storage", storage.ok ? "online" : "offline", storage.detail);
+    const sdk = checkSdkExport();
+    set("sdk", sdk.ok ? "online" : "offline", sdk.detail);
 
     // Checks that need the network.
     const api = fetch("/api/health", { cache: "no-store" })
@@ -87,13 +105,11 @@ export function SystemStatus({ compact = false }: { compact?: boolean }) {
       .catch(() =>
         set("api", "offline", "GET /api/health did not answer. Lessons, the lab and the tutor run in the browser and keep working.")
       );
-    const qiskit = checkQiskitService().then((status) =>
-      set(
-        "qiskit",
-        !status.configured ? "not_configured" : status.available ? "online" : "offline",
-        status.engine ? `${status.detail} (${status.engine})` : status.detail
-      )
-    );
+    const qiskit = qiskitApiUrl()
+      ? checkQiskitService().then((status) =>
+          set("qiskit", status.available ? "online" : "offline", status.engine ? `${status.detail} (${status.engine})` : status.detail)
+        )
+      : Promise.resolve();
     await Promise.all([api, qiskit]);
     setCheckedAt(new Date().toLocaleTimeString());
     setBusy(false);
